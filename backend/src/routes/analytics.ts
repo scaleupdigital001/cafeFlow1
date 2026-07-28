@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import Order from '../models/Order';
 import Table from '../models/Table';
 import Bill from '../models/Bill';
+import Restaurant from '../models/Restaurant';
 import { protect, restrictTo, AuthRequest } from '../middleware/auth';
 
 const router = Router();
@@ -195,14 +196,14 @@ router.get('/daily-report', protect, restrictTo('restaurant_admin'), async (req:
       endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
     }
 
+    const restaurant = await Restaurant.findById(restaurantId);
+    const cafeName = restaurant ? restaurant.name : 'Central Cafe & Bistro';
+
     const bills = await Bill.find({
       restaurantId,
       paymentStatus: 'paid',
       updatedAt: { $gte: startDate, $lte: endDate }
     }).populate('orderId');
-
-    let csv = 'Daily Sales Report\n';
-    csv += `Date Range,${startDate.toLocaleDateString()} to ${endDate.toLocaleDateString()}\n\n`;
 
     const totalBills = bills.length;
     const totalRevenue = bills.reduce((sum, b) => sum + b.totalAmount, 0);
@@ -211,13 +212,14 @@ router.get('/daily-report', protect, restrictTo('restaurant_admin'), async (req:
     const upiRevenue = bills.filter(b => b.paymentMethod === 'upi_link').reduce((sum, b) => sum + b.totalAmount, 0);
     const cashRevenue = bills.filter(b => b.paymentMethod === 'cash').reduce((sum, b) => sum + b.totalAmount, 0);
 
-    csv += `Summary Metrics\n`;
-    csv += `Total Settled Bills,${totalBills}\n`;
-    csv += `Total Revenue (Rs.),${totalRevenue.toFixed(2)}\n`;
-    csv += `Total Subtotal (Rs.),${totalSubtotal.toFixed(2)}\n`;
-    csv += `Total Tax (Rs.),${totalTax.toFixed(2)}\n`;
-    csv += `UPI Revenue (Rs.),${upiRevenue.toFixed(2)}\n`;
-    csv += `Cash Revenue (Rs.),${cashRevenue.toFixed(2)}\n\n`;
+    const reportDateStr = startDate.toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' });
+
+    let csv = `DAILY SALES REPORT,${cafeName.replace(/,/g, ' ')}\n`;
+    csv += `Report Date,${reportDateStr}\n\n`;
+
+    csv += `SUMMARY METRICS\n`;
+    csv += `Total Bills,Total Subtotal (Rs.),Total Tax (Rs.),UPI Revenue (Rs.),Cash Revenue (Rs.),Total Revenue (Rs.)\n`;
+    csv += `${totalBills},${totalSubtotal.toFixed(2)},${totalTax.toFixed(2)},${upiRevenue.toFixed(2)},${cashRevenue.toFixed(2)},${totalRevenue.toFixed(2)}\n\n`;
 
     const itemMap = new Map<string, { quantity: number; revenue: number }>();
     bills.forEach(bill => {
@@ -233,24 +235,36 @@ router.get('/daily-report', protect, restrictTo('restaurant_admin'), async (req:
       }
     });
 
-    csv += `Dish Sales Breakdown\n`;
+    csv += `DISH SALES BREAKDOWN\n`;
     csv += `Dish Name,Quantity Sold,Estimated Revenue (Rs.)\n`;
-    itemMap.forEach((val, key) => {
-      csv += `"${key}",${val.quantity},${val.revenue.toFixed(2)}\n`;
-    });
+    if (itemMap.size === 0) {
+      csv += `No dishes sold on this date,0,0.00\n`;
+    } else {
+      itemMap.forEach((val, key) => {
+        csv += `"${key.replace(/"/g, '""')}",${val.quantity},${val.revenue.toFixed(2)}\n`;
+      });
+    }
     csv += `\n`;
 
-    csv += `Detailed Transactions\n`;
+    csv += `TRANSACTION DETAILS\n`;
     csv += `Bill Number,Table,Customer Name,Subtotal (Rs.),Tax (Rs.),Total Amount (Rs.),Payment Method,Settled Time\n`;
     
-    bills.forEach(bill => {
-      const order = bill.orderId as any;
-      const custName = order ? order.customerName : 'Walk-in';
-      const tableNum = order ? order.tableNumber : 'N/A';
-      const timeStr = new Date(bill.updatedAt).toLocaleTimeString();
-      const methodStr = bill.paymentMethod === 'cash' ? 'Cash' : 'UPI';
-      csv += `${bill.billNumber},${tableNum},"${custName}",${bill.subtotal.toFixed(2)},${bill.tax.toFixed(2)},${bill.totalAmount.toFixed(2)},${methodStr},${timeStr}\n`;
-    });
+    if (bills.length === 0) {
+      csv += `No transactions settled on this date,-,-,0.00,0.00,0.00,-,-\n`;
+    } else {
+      bills.forEach(bill => {
+        const order = bill.orderId as any;
+        const custName = order ? order.customerName : 'Walk-in';
+        const tableNum = order ? order.tableNumber : 'N/A';
+        const timeStr = new Date(bill.updatedAt).toLocaleTimeString('en-US', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true
+        });
+        const methodStr = bill.paymentMethod === 'cash' ? 'Cash' : 'UPI';
+        csv += `${bill.billNumber},${tableNum},"${custName.replace(/"/g, '""')}",${bill.subtotal.toFixed(2)},${bill.tax.toFixed(2)},${bill.totalAmount.toFixed(2)},${methodStr},${timeStr}\n`;
+      });
+    }
 
     const filenameDate = dateParam || new Date().toISOString().split('T')[0];
     res.setHeader('Content-Type', 'text/csv');
