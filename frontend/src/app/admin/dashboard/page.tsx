@@ -108,11 +108,11 @@ export default function AdminDashboardPage() {
 
   // Pie chart coloring values (warm tones matching amber theme)
   const STATUS_COLORS = {
-    received: '#ef4444',   // Red
-    accepted: '#3b82f6',   // Blue
-    preparing: '#f59e0b',  // Amber
-    ready: '#10b981',      // Emerald
-    served: '#d97706',     // Dark Amber
+    received: '#F0705F',   // Terracotta Red
+    accepted: '#6FB2C4',   // Info Blue
+    preparing: '#F0BB63',  // Gold Warning
+    ready: '#8FBB6E',      // Success Green
+    served: '#FF7A5C',     // Primary Terracotta Accent
   };
 
   const getCellColor = (name: string) => {
