@@ -6,22 +6,21 @@ import { useAuthStore } from '../../store/authStore';
 import ThemeToggle from '../../components/ThemeToggle';
 import { 
   Loader2, LayoutDashboard, UtensilsCrossed, Tablet, Users, 
-  ChefHat, LogOut, Coffee, Menu, X, Settings, ShoppingBag, 
-  Star, CreditCard, User, HelpCircle, Search, Bell, ChevronDown
+  ChefHat, LogOut, Coffee, Menu, X, Settings
 } from 'lucide-react';
 import Link from 'next/link';
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { user, token, clearAuth, restaurant } = useAuthStore();
+  const { user, token, clearAuth } = useAuthStore();
   
   const [mounted, setMounted] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     setMounted(true);
+    // Secure guard: check if authenticated and holding admin privilege
     if (!token || !user || user.role !== 'restaurant_admin') {
       router.push('/login');
     }
@@ -34,107 +33,69 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   if (!mounted || !token || !user || user.role !== 'restaurant_admin') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#FAF7F2] dark:bg-[#181310]">
-        <Loader2 className="w-8 h-8 animate-spin text-[#523219] dark:text-[#D9A066]" />
+      <div className="min-h-screen flex items-center justify-center bg-stone-50 dark:bg-stone-950">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
       </div>
     );
   }
 
-  const menuNavLinks = [
-    { label: 'Dashboard', href: '/admin/dashboard', icon: LayoutDashboard },
-    { label: 'Food Order', href: '/admin/tables', icon: ShoppingBag },
-    { label: 'Manage Menu', href: '/admin/menu', icon: UtensilsCrossed },
-    { label: 'Customer Review', href: '/admin/dashboard#reviews', icon: Star },
+  const navLinks = [
+    { label: 'Overview', href: '/admin/dashboard', icon: LayoutDashboard },
+    { label: 'Menu Dishes', href: '/admin/menu', icon: UtensilsCrossed },
+    { label: 'Tables & QRs', href: '/admin/tables', icon: Tablet },
+    { label: 'Staff Roster', href: '/admin/staff', icon: Users },
+    { label: 'Cafe Settings', href: '/admin/settings', icon: Settings },
   ];
-
-  const othersNavLinks = [
-    { label: 'Settings', href: '/admin/settings', icon: Settings },
-    { label: 'Payment', href: '/admin/dashboard#payment', icon: CreditCard },
-    { label: 'Accounts', href: '/admin/staff', icon: Users },
-    { label: 'Help', href: '/admin/settings#help', icon: HelpCircle },
-  ];
-
-  const cafeDisplayName = restaurant?.name || 'Fan Coffee';
 
   return (
-    <div className="min-h-screen bg-[#FAF7F2] dark:bg-[#181310] text-[#362219] dark:text-[#F5EBE1] flex flex-col md:flex-row font-sans selection:bg-[#EFE3D5] selection:text-[#362219]">
+    <div className="min-h-screen bg-stone-50 dark:bg-stone-950 text-foreground flex flex-col md:flex-row">
       {/* Sidebar Navigation (Desktop) */}
-      <aside className="hidden md:flex flex-col w-64 bg-[#FDF8F2] dark:bg-[#1E1713] border-r border-[#EFE6DD] dark:border-[#2D231E] shrink-0 p-5 space-y-6">
-        {/* Brand Header */}
-        <div className="flex items-center gap-3 px-2 py-1">
-          <div className="w-9 h-9 bg-[#523219] text-[#FDF8F2] rounded-full flex items-center justify-center shadow-sm shrink-0">
-            <Coffee className="w-5 h-5 stroke-[2.2]" />
+      <aside className="hidden md:flex flex-col w-64 bg-card text-card-foreground border-r border-border/80 shrink-0">
+        <div className="p-6 border-b border-border/50 flex items-center gap-3">
+          <div className="w-10 h-10 bg-primary text-primary-foreground rounded-2xl flex items-center justify-center">
+            <Coffee className="w-6 h-6" />
           </div>
           <div>
-            <h1 className="font-serif font-black text-lg text-[#362219] dark:text-[#F5EBE1] tracking-tight leading-none">Coffee crush</h1>
-            <span className="text-[10px] text-[#8D7B68] dark:text-[#A89582] font-semibold tracking-wide block mt-0.5">CafeFlow Platform</span>
+            <h1 className="font-serif font-black text-base tracking-tight leading-none">CafeFlow</h1>
+            <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider mt-1 block">Restaurant Hub</span>
           </div>
         </div>
 
-        {/* Navigation Sections */}
-        <div className="flex-1 space-y-6 overflow-y-auto pr-1">
-          {/* MENU Group */}
-          <div className="space-y-1">
-            <span className="px-3 text-[11px] font-bold text-[#A0937D] dark:text-[#8D7B68] uppercase tracking-wider block mb-2">MENU</span>
-            {menuNavLinks.map((link) => {
-              const Icon = link.icon;
-              const isActive = pathname === link.href;
+        <nav className="flex-1 p-4 space-y-1">
+          {navLinks.map((link) => {
+            const Icon = link.icon;
+            const isActive = pathname === link.href;
 
-              return (
-                <Link
-                  key={link.href}
-                  href={link.href}
-                  className={`flex items-center gap-3 px-4 py-3 rounded-2xl text-xs font-bold transition-all duration-200 cursor-pointer ${
-                    isActive
-                      ? 'bg-[#EFE3D5] dark:bg-[#3D302A] text-[#362219] dark:text-[#F5EBE1] shadow-xs'
-                      : 'text-[#8D7B68] dark:text-[#A89582] hover:bg-[#F5EBE1]/60 dark:hover:bg-[#2D241F] hover:text-[#362219]'
-                  }`}
-                >
-                  <Icon className={`w-4.5 h-4.5 shrink-0 ${isActive ? 'text-[#523219] dark:text-[#D9A066]' : 'text-[#8D7B68]'}`} />
-                  <span>{link.label}</span>
-                </Link>
-              );
-            })}
-          </div>
+            return (
+              <Link
+                key={link.href}
+                href={link.href}
+                className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all duration-200 cursor-pointer ${
+                  isActive
+                    ? 'bg-primary text-primary-foreground shadow-md shadow-primary/10'
+                    : 'text-muted-foreground hover:bg-secondary hover:text-foreground'
+                }`}
+              >
+                <Icon className="w-5 h-5 shrink-0" />
+                <span>{link.label}</span>
+              </Link>
+            );
+          })}
+        </nav>
 
-          {/* OTHERS Group */}
-          <div className="space-y-1">
-            <span className="px-3 text-[11px] font-bold text-[#A0937D] dark:text-[#8D7B68] uppercase tracking-wider block mb-2">OTHERS</span>
-            {othersNavLinks.map((link) => {
-              const Icon = link.icon;
-              const isActive = pathname === link.href;
-
-              return (
-                <Link
-                  key={link.href}
-                  href={link.href}
-                  className={`flex items-center gap-3 px-4 py-3 rounded-2xl text-xs font-bold transition-all duration-200 cursor-pointer ${
-                    isActive
-                      ? 'bg-[#EFE3D5] dark:bg-[#3D302A] text-[#362219] dark:text-[#F5EBE1] shadow-xs'
-                      : 'text-[#8D7B68] dark:text-[#A89582] hover:bg-[#F5EBE1]/60 dark:hover:bg-[#2D241F] hover:text-[#362219]'
-                  }`}
-                >
-                  <Icon className={`w-4.5 h-4.5 shrink-0 ${isActive ? 'text-[#523219] dark:text-[#D9A066]' : 'text-[#8D7B68]'}`} />
-                  <span>{link.label}</span>
-                </Link>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Sidebar Footer */}
-        <div className="pt-4 border-t border-[#EFE6DD] dark:border-[#2D231E] space-y-2">
+        <div className="p-4 border-t border-border/50 space-y-2">
+          {/* Quick links to kitchen panel */}
           <Link
             href="/kitchen"
             target="_blank"
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold bg-[#F5EBE1] dark:bg-[#2D241F] text-[#523219] dark:text-[#E8D5C4] hover:bg-[#EFE3D5] transition-all text-center justify-center"
+            className="flex items-center gap-3 px-4 py-2.5 rounded-lg text-xs font-bold bg-secondary text-foreground border border-border/60 hover:bg-muted transition-all text-center justify-center"
           >
-            <ChefHat className="w-4 h-4 text-[#523219] dark:text-[#D9A066]" /> Open Kitchen Panel
+            <ChefHat className="w-4 h-4 text-primary" /> Open Kitchen Screen
           </Link>
           
           <button
             onClick={handleLogout}
-            className="w-full flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold text-[#C62828] hover:bg-[#C62828]/10 transition-all justify-center cursor-pointer"
+            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-xs font-bold text-destructive hover:bg-destructive/10 transition-all justify-center cursor-pointer"
           >
             <LogOut className="w-4 h-4" /> Log Out
           </button>
@@ -142,97 +103,68 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       </aside>
 
       {/* Top Navbar Header (Mobile) */}
-      <header className="md:hidden bg-[#FDF8F2] dark:bg-[#1E1713] border-b border-[#EFE6DD] dark:border-[#2D231E] px-4 py-3 flex items-center justify-between sticky top-0 z-30 shadow-xs">
+      <header className="md:hidden bg-card text-card-foreground border-b border-border/80 px-4 py-3 flex items-center justify-between sticky top-0 z-30 shadow-sm">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-[#523219] text-[#FDF8F2] rounded-full flex items-center justify-center">
-            <Coffee className="w-4 h-4" />
-          </div>
-          <span className="font-serif font-black text-base text-[#362219] dark:text-[#F5EBE1]">Coffee crush</span>
+          <Coffee className="w-5 h-5 text-primary" />
+          <span className="font-serif font-black text-sm">CafeFlow Admin</span>
         </div>
 
         <div className="flex items-center gap-2">
           <ThemeToggle />
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="p-2 rounded-xl bg-[#F5EBE1] dark:bg-[#2D241F] text-[#523219] dark:text-[#E8D5C4] cursor-pointer"
+            className="p-2.5 rounded-lg bg-secondary text-muted-foreground hover:text-foreground cursor-pointer"
           >
             {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
           </button>
         </div>
       </header>
 
-      {/* Mobile Drawer */}
+      {/* Mobile Navigation Drawer */}
       {mobileMenuOpen && (
-        <div className="md:hidden fixed inset-0 z-40 bg-[#362219]/40 backdrop-blur-xs" onClick={() => setMobileMenuOpen(false)}>
-          <div className="bg-[#FDF8F2] dark:bg-[#1E1713] w-64 h-full flex flex-col border-r border-[#EFE6DD] p-5 space-y-6" onClick={(e) => e.stopPropagation()}>
+        <div className="md:hidden fixed inset-0 z-40 bg-stone-950/60 backdrop-blur-sm" onClick={() => setMobileMenuOpen(false)}>
+          <div className="bg-card w-64 h-full flex flex-col border-r border-border animate-slide-right p-5 space-y-6" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <span className="font-serif font-bold text-sm">Navigation</span>
-              <button onClick={() => setMobileMenuOpen(false)} className="p-1 rounded-full bg-[#F5EBE1]">
+              <button onClick={() => setMobileMenuOpen(false)} className="p-1 rounded-full bg-secondary">
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <nav className="flex-1 space-y-4 overflow-y-auto">
-              <div className="space-y-1">
-                <span className="text-[10px] font-bold text-[#A0937D] uppercase tracking-wider block mb-1">MENU</span>
-                {menuNavLinks.map((link) => {
-                  const Icon = link.icon;
-                  const isActive = pathname === link.href;
+            <nav className="flex-1 space-y-2">
+              {navLinks.map((link) => {
+                const Icon = link.icon;
+                const isActive = pathname === link.href;
 
-                  return (
-                    <Link
-                      key={link.href}
-                      href={link.href}
-                      onClick={() => setMobileMenuOpen(false)}
-                      className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                        isActive
-                          ? 'bg-[#EFE3D5] text-[#362219]'
-                          : 'text-[#8D7B68] hover:bg-[#F5EBE1]'
-                      }`}
-                    >
-                      <Icon className="w-4 h-4" />
-                      <span>{link.label}</span>
-                    </Link>
-                  );
-                })}
-              </div>
-
-              <div className="space-y-1">
-                <span className="text-[10px] font-bold text-[#A0937D] uppercase tracking-wider block mb-1">OTHERS</span>
-                {othersNavLinks.map((link) => {
-                  const Icon = link.icon;
-                  const isActive = pathname === link.href;
-
-                  return (
-                    <Link
-                      key={link.href}
-                      href={link.href}
-                      onClick={() => setMobileMenuOpen(false)}
-                      className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                        isActive
-                          ? 'bg-[#EFE3D5] text-[#362219]'
-                          : 'text-[#8D7B68] hover:bg-[#F5EBE1]'
-                      }`}
-                    >
-                      <Icon className="w-4 h-4" />
-                      <span>{link.label}</span>
-                    </Link>
-                  );
-                })}
-              </div>
+                return (
+                  <Link
+                    key={link.href}
+                    href={link.href}
+                    onClick={() => setMobileMenuOpen(false)}
+                    className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
+                      isActive
+                        ? 'bg-primary text-primary-foreground'
+                        : 'text-muted-foreground hover:bg-secondary'
+                    }`}
+                  >
+                    <Icon className="w-5 h-5" />
+                    <span>{link.label}</span>
+                  </Link>
+                );
+              })}
             </nav>
 
-            <div className="space-y-2 border-t border-[#EFE6DD] pt-4">
+            <div className="space-y-2 border-t border-border pt-4">
               <Link
                 href="/kitchen"
                 onClick={() => setMobileMenuOpen(false)}
-                className="flex items-center justify-center gap-2 w-full py-2 bg-[#F5EBE1] text-[#523219] text-xs font-bold rounded-xl"
+                className="flex items-center justify-center gap-2 w-full py-2 bg-secondary text-foreground text-xs font-bold rounded-lg"
               >
-                <ChefHat className="w-4 h-4" /> Kitchen Screen
+                <ChefHat className="w-4 h-4 text-primary" /> Kitchen Screen
               </Link>
               <button
                 onClick={handleLogout}
-                className="w-full flex items-center justify-center gap-2 py-2 text-[#C62828] text-xs font-bold hover:bg-[#C62828]/10 rounded-xl cursor-pointer"
+                className="w-full flex items-center justify-center gap-2 py-2 text-destructive text-xs font-bold hover:bg-destructive/10 rounded-lg cursor-pointer"
               >
                 <LogOut className="w-4 h-4" /> Log Out
               </button>
@@ -241,47 +173,18 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         </div>
       )}
 
-      {/* Main Workspace Area */}
+      {/* Main Content Workspace panel */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Top Header Bar */}
-        <header className="hidden md:flex bg-[#FAF7F2] dark:bg-[#181310] h-18 px-8 items-center justify-between gap-6 shrink-0 border-b border-[#EFE6DD]/40 dark:border-[#2D231E]">
-          {/* Middle Pill Search Bar */}
-          <div className="flex-1 max-w-lg relative">
-            <Search className="w-4 h-4 text-[#8D7B68] absolute left-4 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search"
-              className="w-full bg-[#FFFFFF] dark:bg-[#231C18] border border-[#EFE6DD] dark:border-[#352B25] rounded-full pl-11 pr-5 py-2 text-xs font-medium text-[#362219] dark:text-[#F5EBE1] placeholder-[#A0937D] outline-none focus:ring-2 focus:ring-[#523219]/20 transition-all shadow-xs"
-            />
+        <header className="hidden md:flex bg-card h-16 border-b border-border/50 items-center justify-between px-8 shrink-0">
+          <div className="text-xs text-muted-foreground font-semibold">
+            Partner workspace for <span className="text-foreground font-extrabold">{useAuthStore.getState().restaurant?.name}</span>
           </div>
-
-          {/* Right User & Cafe Controls */}
-          <div className="flex items-center gap-5 shrink-0">
-            {/* Cafe / User Profile Badge */}
-            <div className="flex items-center gap-3 bg-[#FFFFFF] dark:bg-[#231C18] border border-[#EFE6DD] dark:border-[#352B25] px-3.5 py-1.5 rounded-full shadow-xs cursor-pointer hover:border-[#523219]/30 transition-all">
-              <div className="w-7 h-7 bg-[#EFE3D5] dark:bg-[#3D302A] text-[#523219] dark:text-[#D9A066] rounded-full flex items-center justify-center font-bold text-xs">
-                ☕
-              </div>
-              <span className="text-xs font-bold text-[#362219] dark:text-[#F5EBE1]">{cafeDisplayName}</span>
-              <ChevronDown className="w-3.5 h-3.5 text-[#8D7B68]" />
-            </div>
-
-            {/* Notification Bell Icon */}
-            <button className="relative w-9 h-9 bg-[#FFFFFF] dark:bg-[#231C18] border border-[#EFE6DD] dark:border-[#352B25] rounded-full flex items-center justify-center text-[#523219] dark:text-[#F5EBE1] hover:bg-[#F5EBE1]/40 transition-all shadow-xs cursor-pointer">
-              <Bell className="w-4 h-4" />
-              <span className="absolute top-2 right-2 w-2 h-2 bg-[#C62828] rounded-full ring-2 ring-[#FFFFFF]" />
-            </button>
-
-            <ThemeToggle />
-          </div>
+          <ThemeToggle />
         </header>
 
-        {/* Dynamic Page Content */}
-        <main className="flex-1 p-6 md:p-8 overflow-y-auto">
+        <div className="flex-1 p-6 md:p-8 overflow-y-auto">
           {children}
-        </main>
+        </div>
       </div>
     </div>
   );
