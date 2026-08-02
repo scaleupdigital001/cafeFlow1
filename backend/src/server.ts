@@ -6,6 +6,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
 import helmet from 'helmet';
+import compression from 'compression';
 import rateLimit from 'express-rate-limit';
 
 // Initialize and Validate Environment Variables
@@ -26,6 +27,9 @@ import staffRoutes from './routes/staff';
 const app = express();
 app.set('trust proxy', 1); // Trust first proxy (Render, Vercel, Nginx, etc.)
 const server = http.createServer(app);
+
+// Free Tier Optimization 1: Gzip/Deflate HTTP Response Compression
+app.use(compression());
 
 // Strict CORS Configuration based on FRONTEND_URL
 const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
@@ -52,13 +56,16 @@ app.use(express.urlencoded({ limit: '10mb', extended: true }));
 app.use('/bills', express.static(path.join(__dirname, '../public/bills')));
 app.use('/uploads', express.static(path.join(__dirname, '../public/uploads')));
 
-// Socket.io initialization with strict CORS
+// Free Tier Optimization 2: Low-RAM Socket.io Engine Tuning
 const io = new Server(server, {
   cors: {
     origin: frontendUrl,
     methods: ['GET', 'POST'],
     credentials: true,
   },
+  pingTimeout: 20000,
+  pingInterval: 25000,
+  transports: ['websocket', 'polling'],
 });
 
 // Make Socket.io instance accessible in Express request object
@@ -125,9 +132,25 @@ app.use('/api/bills', billRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/staff', staffRoutes);
 
-// Health Check Endpoint
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'UP', timestamp: new Date() });
+// Free Tier Optimization 3: Detailed Keep-Alive & Health Check Endpoints
+app.get(['/health', '/api/health'], (req, res) => {
+  const dbState = mongoose.connection.readyState;
+  const dbStatusMap: Record<number, string> = {
+    0: 'disconnected',
+    1: 'connected',
+    2: 'connecting',
+    3: 'disconnecting',
+  };
+  res.status(200).json({
+    status: 'UP',
+    uptimeSeconds: Math.floor(process.uptime()),
+    database: dbStatusMap[dbState] || 'unknown',
+    memoryUsageMB: {
+      rss: Math.round(process.memoryUsage().rss / 1024 / 1024),
+      heapUsed: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+    },
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // Global Error Handler
@@ -144,10 +167,16 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 const PORT = process.env.PORT || 5000;
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/cafeflow';
 
+// Free Tier Optimization 4: Mongoose Connection Pool Capping for MongoDB Atlas M0 Limit (50 max connections)
 mongoose
-  .connect(MONGO_URI)
+  .connect(MONGO_URI, {
+    maxPoolSize: 10, // Caps Mongoose pool size so Render instances never exceed Atlas M0 50-connection ceiling
+    minPoolSize: 2,
+    serverSelectionTimeoutMS: 5000,
+    socketTimeoutMS: 45000,
+  })
   .then(() => {
-    console.log('[Database] MongoDB connection established successfully.');
+    console.log('[Database] MongoDB connection pool initialized (maxPoolSize: 10).');
     server.listen(PORT, () => {
       console.log(`[Server] CafeFlow backend listening on port ${PORT}`);
     });
@@ -156,4 +185,3 @@ mongoose
     console.error('[Database] Connection failed:', error);
     process.exit(1);
   });
-
