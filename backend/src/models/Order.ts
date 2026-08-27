@@ -20,6 +20,7 @@ export interface IOrder extends Document {
   tableNumber: string;
   items: IOrderItem[];
   status: 'received' | 'accepted' | 'preparing' | 'ready' | 'served' | 'completed' | 'cancelled';
+  billRequested: boolean;
   subtotal: number;
   tax: number;
   totalAmount: number;
@@ -60,6 +61,7 @@ const OrderSchema: Schema = new Schema(
       default: 'received',
       index: true,
     },
+    billRequested: { type: Boolean, default: false },
     subtotal: { type: Number, required: true },
     tax: { type: Number, required: true },
     totalAmount: { type: Number, required: true },

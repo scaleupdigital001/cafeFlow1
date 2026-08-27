@@ -194,10 +194,13 @@ export default function AdminTablesPage() {
     const hasOrder = tableOrders.length > 0;
     const latestOrder = hasOrder ? tableOrders[tableOrders.length - 1] : null;
 
-    // 2. Check pending bill requests
-    const hasBillRequest = waiterRequests.some(
-      (r) => r.tableNumber === tableNum && r.type === 'request_bill' && r.status === 'pending'
-    );
+    // 2. Check pending bill requests or if order is fully served (making it eligible for billing)
+    const hasBillRequest = 
+      (latestOrder as any)?.billRequested === true ||
+      (latestOrder as any)?.status === 'served' ||
+      waiterRequests.some(
+        (r) => r.tableNumber === tableNum && r.type === 'request_bill' && r.status === 'pending'
+      );
 
     // 3. Check pending verification bills
     const matchingBill = recentBills.find(

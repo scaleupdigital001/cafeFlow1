@@ -345,6 +345,11 @@ router.post('/waiter-request', async (req, res) => {
     if (io) {
       io.to(restaurantId.toString()).emit('waiter_requested', request);
       if (type === 'request_bill') {
+        // Also update the active order document
+        await Order.updateMany(
+          { restaurantId, tableNumber, status: { $nin: ['completed', 'cancelled'] } },
+          { $set: { billRequested: true } }
+        );
         io.to(restaurantId.toString()).emit('bill_requested', { restaurantId, tableNumber });
         io.to(restaurantId.toString()).emit('table_status_updated', { tableNumber });
       }

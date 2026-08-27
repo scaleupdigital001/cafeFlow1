@@ -112,7 +112,7 @@ export default function CustomerMenuPage() {
   const [activeOrderStatus, setActiveOrderStatus] = useState<string | null>(null);
   const [order, setOrder] = useState<any | null>(null);
   const [bill, setBill] = useState<any | null>(null);
-  const [billRequested, setBillRequested] = useState(false);
+  const billRequested = activeOrder?.billRequested === true;
 
   // Tab Shell States
   const [activeTab, setActiveTab] = useState<'home' | 'menu' | 'orders' | 'bill'>('menu');
@@ -831,7 +831,7 @@ export default function CustomerMenuPage() {
                         tableNumber: cartTableNumber || '1',
                         type: 'request_bill',
                       });
-                      setBillRequested(true);
+                      alert('Bill requested successfully! The waiter will bring it shortly.');
                     } catch (err: any) {
                       alert('Failed to send bill request.');
                     }
