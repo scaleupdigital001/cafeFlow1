@@ -103,7 +103,7 @@ export default function AdminTablesPage() {
     try {
       const [tablesRes, ordersRes, requestsRes, billsRes] = await Promise.allSettled([
         api.get('/tables'),
-        api.get('/orders'),
+        api.get('/orders/my-restaurant'),
         api.get('/orders/waiter-requests/active'),
         api.get('/bills/recent'),
       ]);
@@ -192,7 +192,7 @@ export default function AdminTablesPage() {
     // 1. Check active orders for this table
     const tableOrders = activeOrders.filter((o) => o.tableNumber === tableNum);
     const hasOrder = tableOrders.length > 0;
-    const latestOrder = hasOrder ? tableOrders[tableOrders.length - 1] : null;
+    const latestOrder = hasOrder ? tableOrders[0] : null;
 
     // 2. Check pending bill requests or if order is fully served (making it eligible for billing)
     const hasBillRequest = 

@@ -184,11 +184,11 @@ router.post('/', async (req, res) => {
 });
 
 /**
- * @route   GET /api/orders/my-restaurant
+ * @route   GET /api/orders or GET /api/orders/my-restaurant
  * @desc    Fetch active and historical orders of restaurant tenant
  * @access  Private (Restaurant Admin / Staff)
  */
-router.get('/my-restaurant', protect, restrictTo('restaurant_admin', 'staff'), async (req: AuthRequest, res: Response) => {
+const getRestaurantOrdersHandler = async (req: AuthRequest, res: Response) => {
   try {
     if (!req.user || !req.user.restaurantId) {
       return res.status(400).json({ success: false, message: 'User is not associated with any restaurant.' });
@@ -203,7 +203,10 @@ router.get('/my-restaurant', protect, restrictTo('restaurant_admin', 'staff'), a
   } catch (error: any) {
     return res.status(500).json({ success: false, message: 'Failed to retrieve orders.', error: error.message });
   }
-});
+};
+
+router.get('/', protect, restrictTo('restaurant_admin', 'staff'), getRestaurantOrdersHandler);
+router.get('/my-restaurant', protect, restrictTo('restaurant_admin', 'staff'), getRestaurantOrdersHandler);
 
 /**
  * @route   GET /api/orders/:id
