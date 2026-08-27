@@ -258,9 +258,10 @@ router.patch('/:id/status', protect, restrictTo('restaurant_admin', 'staff'), as
     }
 
     // Automatically trigger Invoice Bill generation on completion
+    let populatedBillData = null;
     if (status === 'completed') {
-      const existingBill = await Bill.findOne({ orderId: order._id });
-      if (!existingBill) {
+      let billObj = await Bill.findOne({ orderId: order._id });
+      if (!billObj) {
         const restaurant = await Restaurant.findById(req.user.restaurantId);
         if (restaurant) {
           const billNo = generateBillNumber();
@@ -276,6 +277,7 @@ router.patch('/:id/status', protect, restrictTo('restaurant_admin', 'staff'), as
             pdfUrl: pdfFilePath,
           });
           await bill.save();
+          billObj = bill;
           console.log(`[Billing] Bill invoice generated: ${billNo}`);
 
           if (io) {
@@ -286,9 +288,15 @@ router.patch('/:id/status', protect, restrictTo('restaurant_admin', 'staff'), as
           }
         }
       }
+
+      if (billObj) {
+        populatedBillData = await Bill.findById(billObj._id)
+          .populate('orderId')
+          .populate('restaurantId', 'name address contact gstNumber paymentSettings');
+      }
     }
 
-    return res.json({ success: true, message: `Order status set to ${status}.`, data: order });
+    return res.json({ success: true, message: `Order status set to ${status}.`, data: order, bill: populatedBillData });
   } catch (error: any) {
     console.error('Update status error:', error);
     return res.status(500).json({ success: false, message: 'Failed to update status.', error: error.message });

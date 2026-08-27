@@ -6,24 +6,25 @@ import { useAuthStore } from '../../store/authStore';
 import useSocket from '../../hooks/useSocket';
 import api from '../../lib/axios';
 import { getBackendBillUrl } from '../../lib/config';
+import { printThermalReceipt, ThermalReceiptData } from '../../lib/printService';
 import { Button } from '../../components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '../../components/ui/card';
 import { Badge } from '../../components/ui/badge';
 import ThemeToggle from '../../components/ThemeToggle';
 import { 
   Loader2, LogOut, Clock, ChefHat, CheckSquare, BellRing, 
-  Sparkles, Coffee, AlertTriangle, Play, CheckCircle2, X, Plus, Smartphone
+  Sparkles, Coffee, AlertTriangle, CheckCircle2, X, Plus, Smartphone, Printer
 } from 'lucide-react';
 
 interface Bill {
   _id: string;
   billNumber: string;
   totalAmount: number;
+  subtotal?: number;
+  tax?: number;
   pdfUrl?: string;
-  orderId?: {
-    customerName?: string;
-    tableNumber?: string;
-  };
+  orderId?: any;
+  restaurantId?: any;
   paymentStatus?: 'pending' | 'verifying' | 'paid';
   paymentMethod?: 'upi_link' | 'cash';
   createdAt: string;
@@ -58,6 +59,8 @@ interface Order {
   tableNumber: string;
   items: OrderItem[];
   status: 'received' | 'accepted' | 'preparing' | 'ready' | 'served' | 'completed' | 'cancelled';
+  subtotal?: number;
+  tax?: number;
   totalAmount: number;
   createdAt: string;
 }
@@ -80,6 +83,9 @@ export default function KitchenDashboard() {
 
   // Track order IDs that recently appended items (for visual highlight)
   const [recentlyAppendedOrderIds, setRecentlyAppendedOrderIds] = useState<string[]>([]);
+
+  // Track order IDs currently being completed to prevent double-clicks
+  const [completingOrderIds, setCompletingOrderIds] = useState<string[]>([]);
 
   // Track UPI/Cash bills verifying state
   const [verifyingBills, setVerifyingBills] = useState<{ billId: string; billNumber: string; tableNumber: string; totalAmount: number; paymentMethod?: string }[]>([]);
@@ -261,24 +267,103 @@ export default function KitchenDashboard() {
     }
   };
 
-  const handleUpdateStatus = async (orderId: string, nextStatus: string) => {
+  const handleAcceptOrder = async (orderId: string) => {
     try {
-      const response = await api.patch(`/orders/${orderId}/status`, { status: nextStatus });
+      const response = await api.patch(`/orders/${orderId}/status`, { status: 'accepted' });
       const updated = response.data.data;
-
-      // Update in local state
-      setOrders((prev) => {
-        if (nextStatus === 'completed' || nextStatus === 'cancelled') {
-          if (nextStatus === 'completed') {
-            // Refresh recent bills list
-            fetchRecentBills();
-          }
-          return prev.filter((o) => o._id !== orderId);
-        }
-        return prev.map((o) => (o._id === orderId ? updated : o));
-      });
+      setOrders((prev) => prev.map((o) => (o._id === orderId ? updated : o)));
     } catch (err: any) {
-      alert(err.response?.data?.message || 'Failed to update order status.');
+      alert(err.response?.data?.message || 'Failed to accept order.');
+    }
+  };
+
+  const handleCompleteAndPrint = async (order: Order) => {
+    if (completingOrderIds.includes(order._id)) return;
+
+    setCompletingOrderIds((prev) => [...prev, order._id]);
+    try {
+      const response = await api.patch(`/orders/${order._id}/status`, { status: 'completed' });
+      const billData = response.data.bill;
+
+      // Remove from local active orders list
+      setOrders((prev) => prev.filter((o) => o._id !== order._id));
+      
+      // Refresh recent bills list
+      fetchRecentBills();
+
+      // Construct thermal receipt data
+      const receiptData: ThermalReceiptData = {
+        restaurantName: restaurant?.name || 'CafeFlow Restaurant',
+        restaurantAddress: (billData?.restaurantId as any)?.address || restaurant?.address || '',
+        restaurantContact: (billData?.restaurantId as any)?.contact || restaurant?.contact || '',
+        gstNumber: (billData?.restaurantId as any)?.gstNumber || restaurant?.gstNumber || '',
+        billNumber: billData?.billNumber || 'INV-COMPLETED',
+        date: billData?.createdAt || new Date().toISOString(),
+        tableNumber: order.tableNumber,
+        customerName: order.customerName,
+        customerPhone: order.phoneNumber,
+        items: order.items.map((i) => ({
+          name: i.name,
+          quantity: i.quantity,
+          price: i.price,
+          customizations: i.customizations,
+          specialInstructions: i.specialInstructions,
+        })),
+        subtotal: order.subtotal || billData?.subtotal || 0,
+        tax: order.tax || billData?.tax || 0,
+        taxRate: restaurant?.taxRate || 5,
+        totalAmount: order.totalAmount || billData?.totalAmount || 0,
+        paymentStatus: billData?.paymentStatus || 'unpaid',
+        paymentMethod: billData?.paymentMethod || '',
+      };
+
+      // Trigger thermal print workflow
+      await printThermalReceipt(receiptData);
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Failed to complete order and generate bill.');
+    } finally {
+      setCompletingOrderIds((prev) => prev.filter((id) => id !== order._id));
+    }
+  };
+
+  const handleReprintReceipt = async (bill: Bill) => {
+    const orderObj = bill.orderId as any;
+    const restaurantObj = bill.restaurantId as any;
+
+    const receiptData: ThermalReceiptData = {
+      restaurantName: restaurantObj?.name || restaurant?.name || 'CafeFlow Restaurant',
+      restaurantAddress: restaurantObj?.address || restaurant?.address || '',
+      restaurantContact: restaurantObj?.contact || restaurant?.contact || '',
+      gstNumber: restaurantObj?.gstNumber || restaurant?.gstNumber || '',
+      billNumber: bill.billNumber,
+      date: bill.createdAt,
+      tableNumber: orderObj?.tableNumber || (bill as any).tableNumber || 'N/A',
+      customerName: orderObj?.customerName || 'Guest',
+      customerPhone: orderObj?.phoneNumber || '',
+      items: orderObj?.items ? orderObj.items.map((i: any) => ({
+        name: i.name,
+        quantity: i.quantity,
+        price: i.price,
+        customizations: i.customizations,
+        specialInstructions: i.specialInstructions,
+      })) : [],
+      subtotal: bill.subtotal || 0,
+      tax: bill.tax || 0,
+      taxRate: restaurant?.taxRate || 5,
+      totalAmount: bill.totalAmount || 0,
+      paymentStatus: bill.paymentStatus || 'unpaid',
+      paymentMethod: bill.paymentMethod || '',
+    };
+
+    await printThermalReceipt(receiptData);
+  };
+
+  const handleCancelOrder = async (orderId: string) => {
+    try {
+      await api.patch(`/orders/${orderId}/status`, { status: 'cancelled' });
+      setOrders((prev) => prev.filter((o) => o._id !== orderId));
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Failed to cancel order.');
     }
   };
 
@@ -415,10 +500,10 @@ export default function KitchenDashboard() {
         {/* Counter cards */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           {[
-            { label: 'Pending Approval', count: orders.filter((o) => o.status === 'received').length, color: 'text-red-500' },
-            { label: 'Accepted / Queue', count: orders.filter((o) => o.status === 'accepted').length, color: 'text-blue-500' },
-            { label: 'Active Cooking', count: orders.filter((o) => o.status === 'preparing').length, color: 'text-amber-500' },
-            { label: 'Awaiting Service', count: orders.filter((o) => o.status === 'ready' || o.status === 'served').length, color: 'text-emerald-500' },
+            { label: 'Pending Acceptance', count: orders.filter((o) => o.status === 'received').length, color: 'text-red-500' },
+            { label: 'In Progress / Queue', count: orders.filter((o) => o.status !== 'received').length, color: 'text-blue-500' },
+            { label: 'Active Table Calls', count: waiterRequests.length, color: 'text-amber-500' },
+            { label: 'Recent Bills', count: visibleBills.length, color: 'text-emerald-500' },
           ].map((card, i) => (
             <Card key={i} className="border border-border/40 p-4 shadow-sm flex items-center justify-between">
               <span className="text-xs font-semibold text-muted-foreground">{card.label}</span>
@@ -545,61 +630,40 @@ export default function KitchenDashboard() {
                     {/* Action buttons */}
                     <div className="p-4 border-t border-border/40 bg-secondary/10 flex items-center justify-between gap-3">
                       <button
-                        onClick={() => handleUpdateStatus(order._id, 'cancelled')}
-                        className="px-3 py-2 bg-background border border-border text-destructive hover:bg-destructive/10 hover:border-destructive/30 rounded-lg text-xs font-semibold cursor-pointer transition-all shrink-0"
+                        onClick={() => handleCancelOrder(order._id)}
+                        disabled={completingOrderIds.includes(order._id)}
+                        className="px-3 py-2 bg-background border border-border text-destructive hover:bg-destructive/10 hover:border-destructive/30 rounded-lg text-xs font-semibold cursor-pointer transition-all shrink-0 disabled:opacity-50"
                         title="Cancel Order"
                       >
                         Cancel
                       </button>
 
                       <div className="flex-1">
-                        {order.status === 'received' && (
+                        {order.status === 'received' ? (
                           <Button
                             size="sm"
-                            onClick={() => handleUpdateStatus(order._id, 'accepted')}
-                            className="w-full text-xs font-bold gap-1 bg-blue-600 hover:bg-blue-700 text-white cursor-pointer shadow-blue-500/10"
+                            onClick={() => handleAcceptOrder(order._id)}
+                            className="w-full text-xs font-bold gap-1.5 bg-blue-600 hover:bg-blue-700 text-white cursor-pointer shadow-blue-500/10"
                           >
                             Accept Order <CheckSquare className="w-3.5 h-3.5" />
                           </Button>
-                        )}
-
-                        {order.status === 'accepted' && (
+                        ) : (
                           <Button
                             size="sm"
-                            onClick={() => handleUpdateStatus(order._id, 'preparing')}
-                            className="w-full text-xs font-bold gap-1 bg-amber-600 hover:bg-amber-700 text-white cursor-pointer shadow-amber-500/10"
+                            disabled={completingOrderIds.includes(order._id)}
+                            onClick={() => handleCompleteAndPrint(order)}
+                            className="w-full text-xs font-bold gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer shadow-emerald-500/10"
                           >
-                            Start Cooking <Play className="w-3.5 h-3.5" />
-                          </Button>
-                        )}
-
-                        {order.status === 'preparing' && (
-                          <Button
-                            size="sm"
-                            onClick={() => handleUpdateStatus(order._id, 'ready')}
-                            className="w-full text-xs font-bold gap-1 bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer shadow-emerald-500/10"
-                          >
-                            Mark Ready <BellRing className="w-3.5 h-3.5" />
-                          </Button>
-                        )}
-
-                        {order.status === 'ready' && (
-                          <Button
-                            size="sm"
-                            onClick={() => handleUpdateStatus(order._id, 'served')}
-                            className="w-full text-xs font-bold gap-1 bg-primary text-white cursor-pointer"
-                          >
-                            Mark Served <Coffee className="w-3.5 h-3.5" />
-                          </Button>
-                        )}
-
-                        {order.status === 'served' && (
-                          <Button
-                            size="sm"
-                            onClick={() => handleUpdateStatus(order._id, 'completed')}
-                            className="w-full text-xs font-bold gap-1 bg-stone-900 hover:bg-stone-850 dark:bg-stone-100 dark:hover:bg-stone-50 dark:text-stone-950 text-white cursor-pointer"
-                          >
-                            Complete & Bill <CheckCircle2 className="w-3.5 h-3.5" />
+                            {completingOrderIds.includes(order._id) ? (
+                              <>
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                Completing & Printing...
+                              </>
+                            ) : (
+                              <>
+                                Complete & Print Bill <Printer className="w-3.5 h-3.5" />
+                              </>
+                            )}
                           </Button>
                         )}
                       </div>
@@ -796,17 +860,26 @@ export default function KitchenDashboard() {
                             </div>
                           )}
 
-                          {bill.pdfUrl && (
+                          <div className="flex items-center justify-end gap-2.5 mt-1 font-sans">
                             <button
-                              onClick={() => {
-                                const win = window.open(getBackendBillUrl(bill.pdfUrl || ''), '_blank');
-                                win?.focus();
-                              }}
-                              className="text-[9px] text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 font-bold flex items-center gap-0.5 cursor-pointer mt-0.5 justify-end font-sans"
+                              onClick={() => handleReprintReceipt(bill)}
+                              className="text-[9px] text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300 font-bold flex items-center gap-1 cursor-pointer"
+                              title="Print Thermal Receipt"
                             >
-                              View Invoice
+                              <Printer className="w-3 h-3" /> Print Receipt
                             </button>
-                          )}
+                            {bill.pdfUrl && (
+                              <button
+                                onClick={() => {
+                                  const win = window.open(getBackendBillUrl(bill.pdfUrl || ''), '_blank');
+                                  win?.focus();
+                                }}
+                                className="text-[9px] text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 font-bold flex items-center gap-0.5 cursor-pointer"
+                              >
+                                View PDF
+                              </button>
+                            )}
+                          </div>
                         </div>
                       </div>
                     ))}
