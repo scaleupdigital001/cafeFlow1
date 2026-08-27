@@ -18,7 +18,8 @@ router.get('/order/:orderId', async (req, res) => {
   try {
     const bill = await Bill.findOne({ orderId: req.params.orderId })
       .populate('orderId')
-      .populate('restaurantId', 'name address contact gstNumber paymentSettings');
+      .populate('restaurantId', 'name address contact gstNumber paymentSettings')
+      .lean();
     
     if (!bill) {
       return res.status(404).json({ success: false, message: 'Bill has not been generated for this order yet.' });
@@ -35,7 +36,7 @@ router.get('/order/:orderId', async (req, res) => {
  * @desc    Get all bills generated for this restaurant tenant
  * @access  Private (Restaurant Admin / Staff)
  */
-router.get('/my-restaurant', protect, restrictTo('restaurant_admin', 'staff'), async (req: AuthRequest, res: Response) => {
+const getRestaurantBillsHandler = async (req: AuthRequest, res: Response) => {
   try {
     if (!req.user || !req.user.restaurantId) {
       return res.status(400).json({ success: false, message: 'User is not associated with any restaurant.' });
@@ -43,13 +44,17 @@ router.get('/my-restaurant', protect, restrictTo('restaurant_admin', 'staff'), a
 
     const bills = await Bill.find({ restaurantId: req.user.restaurantId })
       .populate('orderId', 'customerName phoneNumber tableNumber')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
 
     return res.json({ success: true, count: bills.length, data: bills });
   } catch (error: any) {
     return res.status(500).json({ success: false, message: 'Failed to fetch restaurant bills.', error: error.message });
   }
-});
+};
+
+router.get('/my-restaurant', protect, restrictTo('restaurant_admin', 'staff'), getRestaurantBillsHandler);
+router.get('/recent', protect, restrictTo('restaurant_admin', 'staff'), getRestaurantBillsHandler);
 
 /**
  * @route   GET /api/bills/download/:filename

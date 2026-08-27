@@ -88,22 +88,70 @@ export default function AdminTablesPage() {
     fetchAllData();
   }, []);
 
-  // Handle Socket.IO real-time events
+  // Handle Socket.IO real-time events with targeted state updates
   useEffect(() => {
     if (!socket) return;
 
-    const handleNewOrder = () => fetchAllData();
-    const handleOrderUpdated = () => fetchAllData();
-    const handleWaiterRequest = () => fetchAllData();
-    const handleTableStatus = () => fetchAllData();
-    const handleBillReady = () => fetchAllData();
+    const handleNewOrder = (order?: Order) => {
+      if (!order?._id || !order?.tableNumber) return fetchAllData();
+      setActiveOrders((prev) => [order, ...prev.filter((o) => o._id !== order._id)]);
+    };
+
+    const handleOrderUpdated = (order?: Order) => {
+      if (!order?._id) return fetchAllData();
+      if (order.status === 'completed' || order.status === 'cancelled') {
+        setActiveOrders((prev) => prev.filter((o) => o._id !== order._id));
+      } else {
+        setActiveOrders((prev) =>
+          prev.some((o) => o._id === order._id)
+            ? prev.map((o) => (o._id === order._id ? order : o))
+            : [order, ...prev]
+        );
+      }
+    };
+
+    const handleWaiterRequest = (req?: WaiterRequest) => {
+      if (!req?._id || !req?.tableNumber) return fetchAllData();
+      setWaiterRequests((prev) => [req, ...prev.filter((r) => r._id !== req._id)]);
+    };
+
+    const handleWaiterRequestResolved = (payload?: { _id: string }) => {
+      if (!payload?._id) return fetchAllData();
+      setWaiterRequests((prev) => prev.filter((r) => r._id !== payload._id));
+    };
+
+    const handleBillPaymentVerifying = (data?: { billId: string; tableNumber: string }) => {
+      if (!data?.tableNumber) return fetchAllData();
+      setActiveOrders((prev) =>
+        prev.map((o) => (o.tableNumber === data.tableNumber ? { ...o, billRequested: true } : o))
+      );
+    };
+
+    const handleBillRequested = (data?: { tableNumber: string }) => {
+      if (!data?.tableNumber) return fetchAllData();
+      setActiveOrders((prev) =>
+        prev.map((o) => (o.tableNumber === data.tableNumber ? { ...o, billRequested: true } : o))
+      );
+    };
+
+    const handleBillPaymentApproved = (payload?: { billId: string }) => {
+      if (!payload?.billId) return fetchAllData();
+      setRecentBills((prev) => prev.filter((b) => b._id !== payload.billId));
+    };
+
+    const handleBillReady = (bill?: Bill) => {
+      if (!bill?._id) return fetchAllData();
+      setRecentBills((prev) => [bill, ...prev.filter((b) => b._id !== bill._id)]);
+    };
 
     socket.on('new_order', handleNewOrder);
     socket.on('order_updated', handleOrderUpdated);
     socket.on('order_status_updated', handleOrderUpdated);
     socket.on('waiter_requested', handleWaiterRequest);
-    socket.on('bill_requested', handleTableStatus);
-    socket.on('table_status_updated', handleTableStatus);
+    socket.on('waiter_request_resolved', handleWaiterRequestResolved);
+    socket.on('bill_requested', handleBillRequested);
+    socket.on('bill_payment_verifying', handleBillPaymentVerifying);
+    socket.on('bill_payment_approved', handleBillPaymentApproved);
     socket.on('bill_ready', handleBillReady);
 
     return () => {
@@ -111,8 +159,10 @@ export default function AdminTablesPage() {
       socket.off('order_updated', handleOrderUpdated);
       socket.off('order_status_updated', handleOrderUpdated);
       socket.off('waiter_requested', handleWaiterRequest);
-      socket.off('bill_requested', handleTableStatus);
-      socket.off('table_status_updated', handleTableStatus);
+      socket.off('waiter_request_resolved', handleWaiterRequestResolved);
+      socket.off('bill_requested', handleBillRequested);
+      socket.off('bill_payment_verifying', handleBillPaymentVerifying);
+      socket.off('bill_payment_approved', handleBillPaymentApproved);
       socket.off('bill_ready', handleBillReady);
     };
   }, [socket]);
@@ -147,57 +197,112 @@ export default function AdminTablesPage() {
     }
   };
 
-  // Helper to determine single table operational status & details
-  const getTableInfo = (tableNum: string) => {
-    // 1. Check active orders for this table
-    const tableOrders = activeOrders.filter((o) => o.tableNumber === tableNum);
-    const hasOrder = tableOrders.length > 0;
-    const latestOrder = hasOrder ? tableOrders[0] : null;
-
-    // 2. Explicit customer bill request check (from Order document or pending WaiterRequest)
-    const hasExplicitBillRequest =
-      (latestOrder as any)?.billRequested === true ||
-      waiterRequests.some(
-        (r) => r.tableNumber === tableNum && r.type === 'request_bill' && r.status === 'pending'
-      );
-
-    // 3. Check pending verification bills
-    const matchingBill = recentBills.find(
-      (b) =>
-        (b.tableNumber === tableNum || (b.orderId as any)?.tableNumber === tableNum) &&
-        (b.paymentStatus === 'pending' || b.paymentStatus === 'verifying')
-    );
-
-    // 4. Determine eligibility for billing action
-    const isEligibleForBilling =
-      (latestOrder as any)?.status === 'served' ||
-      hasExplicitBillRequest ||
-      Boolean(matchingBill);
-
-    // 5. Determine operational card badge status
-    let status: 'AVAILABLE' | 'ACTIVE' | 'SERVED' | 'BILL_REQUESTED' = 'AVAILABLE';
-
-    if (hasExplicitBillRequest || matchingBill) {
-      status = 'BILL_REQUESTED';
-    } else if (latestOrder?.status === 'served') {
-      status = 'SERVED';
-    } else if (hasOrder) {
-      status = 'ACTIVE';
+  // Precompute derived table information indexed by tableNumber (O(N) data passes instead of O(tables * N))
+  const tableInfoMap = React.useMemo(() => {
+    // 1. Group active orders by tableNumber while preserving array order
+    const ordersByTable: Record<string, Order[]> = {};
+    for (const order of activeOrders) {
+      if (!ordersByTable[order.tableNumber]) {
+        ordersByTable[order.tableNumber] = [];
+      }
+      ordersByTable[order.tableNumber].push(order);
     }
 
-    const totalItems = tableOrders.reduce((sum, o) => sum + o.items.reduce((s, i) => s + i.quantity, 0), 0);
-    const totalAmount = tableOrders.reduce((sum, o) => sum + (o.totalAmount || 0), 0);
+    // 2. Map pending bill waiter requests by tableNumber
+    const pendingBillRequests = new Set<string>();
+    for (const req of waiterRequests) {
+      if (req.type === 'request_bill' && req.status === 'pending') {
+        pendingBillRequests.add(req.tableNumber);
+      }
+    }
 
-    return {
-      status,
-      orders: tableOrders,
-      latestOrder,
-      hasExplicitBillRequest,
-      isEligibleForBilling,
-      matchingBill,
-      totalItems,
-      totalAmount,
-    };
+    // 3. Map pending/verifying bills by tableNumber
+    const billsByTable: Record<string, Bill> = {};
+    for (const bill of recentBills) {
+      if (bill.paymentStatus === 'pending' || bill.paymentStatus === 'verifying') {
+        const tableNum = bill.tableNumber || (bill.orderId as any)?.tableNumber;
+        if (tableNum && !billsByTable[tableNum]) {
+          billsByTable[tableNum] = bill;
+        }
+      }
+    }
+
+    // 4. Construct table information dictionary for all tables
+    const map: Record<
+      string,
+      {
+        status: 'AVAILABLE' | 'ACTIVE' | 'SERVED' | 'BILL_REQUESTED';
+        orders: Order[];
+        latestOrder: Order | null;
+        hasExplicitBillRequest: boolean;
+        isEligibleForBilling: boolean;
+        matchingBill: Bill | undefined;
+        totalItems: number;
+        totalAmount: number;
+      }
+    > = {};
+
+    for (const t of tables) {
+      const tableNum = t.tableNumber;
+      const tableOrders = ordersByTable[tableNum] || [];
+      const hasOrder = tableOrders.length > 0;
+      const latestOrder = hasOrder ? tableOrders[0] : null;
+
+      const hasExplicitBillRequest =
+        (latestOrder as any)?.billRequested === true || pendingBillRequests.has(tableNum);
+
+      const matchingBill = billsByTable[tableNum];
+
+      const isEligibleForBilling =
+        (latestOrder as any)?.status === 'served' || hasExplicitBillRequest || Boolean(matchingBill);
+
+      let status: 'AVAILABLE' | 'ACTIVE' | 'SERVED' | 'BILL_REQUESTED' = 'AVAILABLE';
+      if (hasExplicitBillRequest || matchingBill) {
+        status = 'BILL_REQUESTED';
+      } else if (latestOrder?.status === 'served') {
+        status = 'SERVED';
+      } else if (hasOrder) {
+        status = 'ACTIVE';
+      }
+
+      let totalItems = 0;
+      let totalAmount = 0;
+      for (const o of tableOrders) {
+        totalAmount += o.totalAmount || 0;
+        for (const item of o.items) {
+          totalItems += item.quantity;
+        }
+      }
+
+      map[tableNum] = {
+        status,
+        orders: tableOrders,
+        latestOrder,
+        hasExplicitBillRequest,
+        isEligibleForBilling,
+        matchingBill,
+        totalItems,
+        totalAmount,
+      };
+    }
+
+    return map;
+  }, [tables, activeOrders, waiterRequests, recentBills]);
+
+  // Fast O(1) lookup helper
+  const getTableInfo = (tableNum: string) => {
+    return (
+      tableInfoMap[tableNum] || {
+        status: 'AVAILABLE',
+        orders: [],
+        latestOrder: null,
+        hasExplicitBillRequest: false,
+        isEligibleForBilling: false,
+        matchingBill: undefined,
+        totalItems: 0,
+        totalAmount: 0,
+      }
+    );
   };
 
   // Handle Admin COMPLETE & PRINT BILL / APPROVE PAYMENT & PRINT BILL

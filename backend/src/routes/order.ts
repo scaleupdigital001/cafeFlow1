@@ -194,10 +194,11 @@ const getRestaurantOrdersHandler = async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ success: false, message: 'User is not associated with any restaurant.' });
     }
 
-    // Default fetch limit: last 100 orders
-    const orders = await Order.find({ restaurantId: req.user.restaurantId })
-      .sort({ createdAt: -1 })
-      .limit(100);
+    // Query active non-completed, non-cancelled orders for operational dashboards
+    const orders = await Order.find({
+      restaurantId: req.user.restaurantId,
+      status: { $nin: ['completed', 'cancelled'] },
+    }).sort({ createdAt: -1 }).lean();
 
     return res.json({ success: true, count: orders.length, data: orders });
   } catch (error: any) {
@@ -393,7 +394,7 @@ router.get('/waiter-requests/active', protect, restrictTo('restaurant_admin', 's
     const requests = await WaiterRequest.find({
       restaurantId: req.user.restaurantId,
       status: 'pending',
-    }).sort({ createdAt: -1 });
+    }).sort({ createdAt: -1 }).lean();
 
     return res.json({ success: true, count: requests.length, data: requests });
   } catch (error: any) {

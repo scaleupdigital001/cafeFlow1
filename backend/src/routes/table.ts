@@ -17,7 +17,7 @@ router.get('/', protect, restrictTo('restaurant_admin', 'staff'), async (req: Au
       return res.status(400).json({ success: false, message: 'User is not associated with any restaurant.' });
     }
 
-    const tables = await Table.find({ restaurantId: req.user.restaurantId }).sort({ tableNumber: 1 });
+    const tables = await Table.find({ restaurantId: req.user.restaurantId }).sort({ tableNumber: 1 }).lean();
     return res.json({ success: true, count: tables.length, data: tables });
   } catch (error: any) {
     return res.status(500).json({ success: false, message: 'Failed to retrieve tables.', error: error.message });
