@@ -236,7 +236,7 @@ router.patch('/:id/status', protect, restrictTo('restaurant_admin', 'staff'), as
       return res.status(400).json({ success: false, message: 'User is not associated with any restaurant.' });
     }
 
-    const { status } = req.body;
+    const { status, paymentMethod = 'cash' } = req.body;
     const validStatuses = ['received', 'accepted', 'preparing', 'ready', 'served', 'completed', 'cancelled'];
     if (!validStatuses.includes(status)) {
       return res.status(400).json({ success: false, message: 'Invalid order status value.' });
@@ -278,6 +278,8 @@ router.patch('/:id/status', protect, restrictTo('restaurant_admin', 'staff'), as
             tax: order.tax,
             totalAmount: order.totalAmount,
             pdfUrl: pdfFilePath,
+            paymentStatus: 'paid',
+            paymentMethod: paymentMethod || 'cash',
           });
           await bill.save();
           billObj = bill;
@@ -290,6 +292,13 @@ router.patch('/:id/status', protect, restrictTo('restaurant_admin', 'staff'), as
             io.to(order._id.toString()).emit('bill_ready', populatedBill);
           }
         }
+      } else {
+        // If bill exists (e.g., from customer payment request), mark it as paid
+        billObj.paymentStatus = 'paid';
+        if (!billObj.paymentMethod && paymentMethod) {
+          billObj.paymentMethod = paymentMethod as any;
+        }
+        await billObj.save();
       }
 
       if (billObj) {

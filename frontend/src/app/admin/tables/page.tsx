@@ -200,14 +200,29 @@ export default function AdminTablesPage() {
     };
   };
 
-  // Handle Admin COMPLETE & PRINT BILL
+  // Handle Admin COMPLETE & PRINT BILL / APPROVE PAYMENT & PRINT BILL
   const handleAdminCompleteAndPrint = async (order: Order) => {
     if (completingTable) return;
     setCompletingTable(true);
 
     try {
-      const response = await api.patch(`/orders/${order._id}/status`, { status: 'completed' });
-      const billData = response.data.bill;
+      const info = selectedTableInfo;
+      let billData: any = null;
+
+      // Scenario B: Customer requested payment (bill is verifying)
+      if (info?.matchingBill && info.matchingBill.paymentStatus === 'verifying') {
+        const response = await api.post(`/bills/${info.matchingBill._id}/pay/approve`, {
+          paymentMethod: info.matchingBill.paymentMethod || 'cash',
+        });
+        billData = response.data.data;
+      } else {
+        // Scenario A: Direct counter payment
+        const response = await api.patch(`/orders/${order._id}/status`, {
+          status: 'completed',
+          paymentMethod: 'cash',
+        });
+        billData = response.data.bill;
+      }
 
       // Construct receipt data for thermal print
       const receiptData: ThermalReceiptData = {
@@ -231,12 +246,16 @@ export default function AdminTablesPage() {
         tax: order.tax || billData?.tax || 0,
         taxRate: restaurant?.taxRate || 5,
         totalAmount: order.totalAmount || billData?.totalAmount || 0,
-        paymentStatus: billData?.paymentStatus || 'unpaid',
-        paymentMethod: billData?.paymentMethod || '',
+        paymentStatus: billData?.paymentStatus || 'paid',
+        paymentMethod: billData?.paymentMethod || 'cash',
       };
 
-      // Trigger thermal printing engine
-      await printThermalReceipt(receiptData);
+      // Trigger thermal printing engine safely (print error will not revert DB completion)
+      try {
+        await printThermalReceipt(receiptData);
+      } catch (printErr) {
+        console.error('Thermal print error:', printErr);
+      }
 
       // Close modal and refresh dashboard state
       setSelectedTableNum(null);
@@ -745,7 +764,10 @@ export default function AdminTablesPage() {
                     </>
                   ) : (
                     <>
-                      <Printer className="w-4 h-4" /> COMPLETE & PRINT BILL
+                      <Printer className="w-4 h-4" />{' '}
+                      {selectedTableInfo.matchingBill?.paymentStatus === 'verifying'
+                        ? 'APPROVE PAYMENT & PRINT BILL'
+                        : 'COMPLETE & PRINT BILL'}
                     </>
                   )}
                 </Button>

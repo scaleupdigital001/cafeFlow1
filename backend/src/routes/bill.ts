@@ -4,6 +4,7 @@ import fs from 'fs';
 import Bill from '../models/Bill';
 import Order from '../models/Order';
 import Restaurant from '../models/Restaurant';
+import WaiterRequest from '../models/WaiterRequest';
 import { protect, restrictTo, AuthRequest } from '../middleware/auth';
 
 const router = Router();
@@ -179,7 +180,7 @@ router.post('/:id/pay/cash-intent', async (req, res) => {
  */
 router.post('/:id/pay/approve', protect, restrictTo('restaurant_admin', 'staff'), async (req: AuthRequest, res: Response) => {
   try {
-    const { paymentMethod = 'cash' } = req.body;
+    const { paymentMethod } = req.body;
     
     const bill = await Bill.findById(req.params.id);
     if (!bill) {
@@ -187,7 +188,9 @@ router.post('/:id/pay/approve', protect, restrictTo('restaurant_admin', 'staff')
     }
 
     bill.paymentStatus = 'paid';
-    bill.paymentMethod = paymentMethod;
+    if (paymentMethod) {
+      bill.paymentMethod = paymentMethod;
+    }
     await bill.save();
 
     // Broadcast update via socket
@@ -201,10 +204,19 @@ router.post('/:id/pay/approve', protect, restrictTo('restaurant_admin', 'staff')
       io.to(bill.restaurantId.toString()).emit('bill_payment_approved', { billId: bill._id });
       // Complete order as well if not already completed
       const order = await Order.findById(bill.orderId);
-      if (order && order.status !== 'completed') {
-        order.status = 'completed';
-        await order.save();
+      if (order) {
+        if (order.status !== 'completed') {
+          order.status = 'completed';
+          await order.save();
+        }
+        // Automatically resolve any pending request_bill requests for this table
+        await WaiterRequest.updateMany(
+          { restaurantId: order.restaurantId, tableNumber: order.tableNumber, type: 'request_bill', status: 'pending' },
+          { status: 'resolved' }
+        );
+
         io.to(bill.restaurantId.toString()).emit('order_updated', order);
+        io.to(bill.restaurantId.toString()).emit('table_status_updated', { tableNumber: order.tableNumber });
       }
     }
 
