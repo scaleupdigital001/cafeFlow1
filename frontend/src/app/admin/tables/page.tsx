@@ -194,10 +194,9 @@ export default function AdminTablesPage() {
     const hasOrder = tableOrders.length > 0;
     const latestOrder = hasOrder ? tableOrders[0] : null;
 
-    // 2. Check pending bill requests or if order is fully served (making it eligible for billing)
-    const hasBillRequest = 
+    // 2. Explicit customer bill request check (from Order document or pending WaiterRequest)
+    const hasExplicitBillRequest =
       (latestOrder as any)?.billRequested === true ||
-      (latestOrder as any)?.status === 'served' ||
       waiterRequests.some(
         (r) => r.tableNumber === tableNum && r.type === 'request_bill' && r.status === 'pending'
       );
@@ -209,10 +208,19 @@ export default function AdminTablesPage() {
         (b.paymentStatus === 'pending' || b.paymentStatus === 'verifying')
     );
 
-    let status: 'AVAILABLE' | 'ACTIVE' | 'BILL_REQUESTED' = 'AVAILABLE';
+    // 4. Determine eligibility for billing action
+    const isEligibleForBilling =
+      (latestOrder as any)?.status === 'served' ||
+      hasExplicitBillRequest ||
+      Boolean(matchingBill);
 
-    if (hasBillRequest || matchingBill) {
+    // 5. Determine operational card badge status
+    let status: 'AVAILABLE' | 'ACTIVE' | 'SERVED' | 'BILL_REQUESTED' = 'AVAILABLE';
+
+    if (hasExplicitBillRequest || matchingBill) {
       status = 'BILL_REQUESTED';
+    } else if (latestOrder?.status === 'served') {
+      status = 'SERVED';
     } else if (hasOrder) {
       status = 'ACTIVE';
     }
@@ -224,7 +232,8 @@ export default function AdminTablesPage() {
       status,
       orders: tableOrders,
       latestOrder,
-      hasBillRequest,
+      hasExplicitBillRequest,
+      isEligibleForBilling,
       matchingBill,
       totalItems,
       totalAmount,
@@ -312,13 +321,18 @@ export default function AdminTablesPage() {
 
   // Compute table dashboard counters
   const tableDataList = tables.map((t) => ({ table: t, info: getTableInfo(t.tableNumber) }));
-  const billRequestedCount = tableDataList.filter((td) => td.info.status === 'BILL_REQUESTED').length;
+  const billRequestedCount = tableDataList.filter((td) => td.info.status === 'BILL_REQUESTED' || td.info.status === 'SERVED').length;
   const activeCount = tableDataList.filter((td) => td.info.status === 'ACTIVE').length;
   const availableCount = tableDataList.filter((td) => td.info.status === 'AVAILABLE').length;
 
-  // Sort: BILL_REQUESTED first, then ACTIVE, then AVAILABLE
+  // Sort: BILL_REQUESTED first, then SERVED, then ACTIVE, then AVAILABLE
   const sortedTableDataList = [...tableDataList].sort((a, b) => {
-    const priority = { BILL_REQUESTED: 0, ACTIVE: 1, AVAILABLE: 2 };
+    const priority: Record<'BILL_REQUESTED' | 'SERVED' | 'ACTIVE' | 'AVAILABLE', number> = {
+      BILL_REQUESTED: 0,
+      SERVED: 1,
+      ACTIVE: 2,
+      AVAILABLE: 3,
+    };
     return priority[a.info.status] - priority[b.info.status];
   });
 
@@ -416,7 +430,13 @@ export default function AdminTablesPage() {
                     {/* Visual Status Strip at top */}
                     <div
                       className={`h-1.5 w-full absolute top-0 left-0 ${
-                        isBillReq ? 'bg-amber-500 animate-pulse' : isActive ? 'bg-blue-500' : 'bg-stone-300 dark:bg-stone-700'
+                        info.status === 'BILL_REQUESTED'
+                          ? 'bg-amber-500 animate-pulse'
+                          : info.status === 'SERVED'
+                          ? 'bg-emerald-500'
+                          : isActive
+                          ? 'bg-blue-500'
+                          : 'bg-stone-300 dark:bg-stone-700'
                       }`}
                     />
 
@@ -431,15 +451,29 @@ export default function AdminTablesPage() {
 
                         <Badge
                           variant={
-                            isBillReq ? 'danger' : isActive ? 'default' : 'secondary'
+                            info.status === 'BILL_REQUESTED'
+                              ? 'danger'
+                              : info.status === 'SERVED'
+                              ? 'success'
+                              : isActive
+                              ? 'default'
+                              : 'secondary'
                           }
                           className={`text-[10px] py-0.5 font-bold capitalize gap-1 ${
-                            isBillReq ? 'bg-amber-600 text-white animate-pulse' : ''
+                            info.status === 'BILL_REQUESTED'
+                              ? 'bg-amber-600 text-white animate-pulse'
+                              : info.status === 'SERVED'
+                              ? 'bg-emerald-600 text-white'
+                              : ''
                           }`}
                         >
-                          {isBillReq ? (
+                          {info.status === 'BILL_REQUESTED' ? (
                             <>
                               <AlertTriangle className="w-3 h-3" /> BILL REQUESTED
+                            </>
+                          ) : info.status === 'SERVED' ? (
+                            <>
+                              <CheckCircle2 className="w-3 h-3" /> SERVED / READY FOR BILLING
                             </>
                           ) : isActive ? (
                             <>
@@ -452,7 +486,7 @@ export default function AdminTablesPage() {
                       </div>
 
                       {/* Content details based on operational status */}
-                      {isBillReq || isActive ? (
+                      {info.isEligibleForBilling || isActive ? (
                         <div className="bg-secondary/40 border border-border/50 rounded-xl p-3.5 space-y-2 text-xs">
                           <div className="flex justify-between items-center text-muted-foreground">
                             <span>Customer:</span>
@@ -481,10 +515,14 @@ export default function AdminTablesPage() {
 
                     {/* Card Action Button */}
                     <div className="p-4 border-t border-border/40 bg-secondary/10">
-                      {isBillReq ? (
+                      {info.isEligibleForBilling ? (
                         <Button
                           onClick={() => setSelectedTableNum(table.tableNumber)}
-                          className="w-full text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white shadow-md shadow-amber-500/20 cursor-pointer gap-1.5"
+                          className={`w-full text-xs font-bold shadow-md cursor-pointer gap-1.5 ${
+                            info.status === 'BILL_REQUESTED'
+                              ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-amber-500/20'
+                              : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20'
+                          }`}
                         >
                           <Receipt className="w-4 h-4" /> VIEW ORDER & COMPLETE BILL
                         </Button>
