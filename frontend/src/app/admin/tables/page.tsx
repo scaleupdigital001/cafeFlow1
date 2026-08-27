@@ -45,7 +45,15 @@ export default function AdminTablesPage() {
   // Bind real-time Socket.IO updates
   const socket = useSocket('restaurant', restaurantId);
 
+  const inFlightRef = React.useRef(false);
+  const hasQueuedFetchRef = React.useRef(false);
+
   const fetchAllData = async () => {
+    if (inFlightRef.current) {
+      hasQueuedFetchRef.current = true;
+      return;
+    }
+    inFlightRef.current = true;
     setLoading(true);
     try {
       const [tablesRes, ordersRes, requestsRes, billsRes] = await Promise.allSettled([
@@ -68,6 +76,11 @@ export default function AdminTablesPage() {
       setError('Failed to load table operational data.');
     } finally {
       setLoading(false);
+      inFlightRef.current = false;
+      if (hasQueuedFetchRef.current) {
+        hasQueuedFetchRef.current = false;
+        fetchAllData();
+      }
     }
   };
 
