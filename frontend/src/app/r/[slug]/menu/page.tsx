@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useCartStore, CartCustomization } from '../../../../store/cartStore';
 import api from '../../../../lib/axios';
+import { getBackendBillUrl } from '../../../../lib/config';
 import { Button } from '../../../../components/ui/button';
 import { Badge } from '../../../../components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '../../../../components/ui/card';
@@ -258,11 +259,7 @@ export default function CustomerMenuPage() {
     }
   };
 
-  const getBackendBillUrl = (pdfPath: string): string => {
-    const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
-    const filename = pdfPath.split('/').pop() || '';
-    return `${apiBaseUrl}/api/bills/download/${filename}`;
-  };
+
 
   const handleUPIPayClick = async () => {
     if (!bill) return;

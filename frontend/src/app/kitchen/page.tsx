@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useAuthStore } from '../../store/authStore';
 import useSocket from '../../hooks/useSocket';
 import api from '../../lib/axios';
+import { getBackendBillUrl } from '../../lib/config';
 import { Button } from '../../components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '../../components/ui/card';
 import { Badge } from '../../components/ui/badge';
@@ -323,11 +324,7 @@ export default function KitchenDashboard() {
     }
   };
 
-  const getBackendBillUrl = (pdfPath: string): string => {
-    const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
-    const filename = pdfPath.split('/').pop() || '';
-    return `${apiBaseUrl}/api/bills/download/${filename}`;
-  };
+
 
   const dismissBill = (billId: string) => {
     const updated = [...dismissedBillIds, billId];

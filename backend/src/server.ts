@@ -32,10 +32,28 @@ const server = http.createServer(app);
 app.use(compression());
 
 // Strict CORS Configuration based on FRONTEND_URL
-const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+const rawFrontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+const normalizedFrontendUrl = rawFrontendUrl.replace(/\/+$/, '');
+
+const allowedOrigins = Array.from(
+  new Set([
+    normalizedFrontendUrl,
+    'https://cafe-flow1-omega.vercel.app',
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+  ])
+);
+
 app.use(
   cors({
-    origin: frontendUrl,
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      const cleanedOrigin = origin.replace(/\/+$/, '');
+      if (allowedOrigins.includes(cleanedOrigin)) {
+        return callback(null, true);
+      }
+      return callback(new Error(`CORS policy does not allow access from origin: ${origin}`));
+    },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
@@ -59,7 +77,14 @@ app.use('/uploads', express.static(path.join(__dirname, '../public/uploads')));
 // Free Tier Optimization 2: Low-RAM Socket.io Engine Tuning
 const io = new Server(server, {
   cors: {
-    origin: frontendUrl,
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      const cleanedOrigin = origin.replace(/\/+$/, '');
+      if (allowedOrigins.includes(cleanedOrigin)) {
+        return callback(null, true);
+      }
+      return callback(new Error(`Socket CORS policy does not allow access from origin: ${origin}`));
+    },
     methods: ['GET', 'POST'],
     credentials: true,
   },

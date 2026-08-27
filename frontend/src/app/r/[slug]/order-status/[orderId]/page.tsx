@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import useSocket from '../../../../../hooks/useSocket';
 import api from '../../../../../lib/axios';
+import { getBackendBillUrl } from '../../../../../lib/config';
 import { Button } from '../../../../../components/ui/button';
 import { Badge } from '../../../../../components/ui/badge';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '../../../../../components/ui/card';
@@ -272,13 +273,7 @@ export default function OrderStatusPage() {
     }
   };
 
-  const getBackendBillUrl = (pdfPath: string): string => {
-    const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
-    // pdfPath will look like "/bills/INV-XXX.pdf"
-    // Extract filename
-    const filename = pdfPath.split('/').pop() || '';
-    return `${apiBaseUrl}/api/bills/download/${filename}`;
-  };
+
 
   return (
     <div className="bg-background text-foreground min-h-screen pb-12">
