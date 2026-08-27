@@ -70,6 +70,7 @@ export default function AdminMenuPage() {
   // Load menu items
   const loadMenu = async () => {
     setLoading(true);
+    setError(null);
     try {
       const dishesResponse = await api.get('/dishes/my-restaurant');
       setDishes(dishesResponse.data.data);

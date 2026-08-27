@@ -24,18 +24,28 @@ router.get('/slug/:slug', async (req, res) => {
   }
 });
 
+// Helper to resolve restaurant ID for logged-in user with fallback for super_admin
+const getTargetRestaurantId = async (req: AuthRequest) => {
+  if (req.user?.restaurantId) {
+    return req.user.restaurantId;
+  }
+  const firstRest = await Restaurant.findOne();
+  return firstRest ? firstRest._id : null;
+};
+
 /**
  * @route   GET /api/dishes/my-restaurant
  * @desc    Get all dishes for the logged-in restaurant tenant
- * @access  Private (Restaurant Admin / Staff)
+ * @access  Private (Restaurant Admin / Staff / Super Admin)
  */
-router.get('/my-restaurant', protect, restrictTo('restaurant_admin', 'staff'), async (req: AuthRequest, res: Response) => {
+router.get('/my-restaurant', protect, restrictTo('restaurant_admin', 'staff', 'super_admin'), async (req: AuthRequest, res: Response) => {
   try {
-    if (!req.user || !req.user.restaurantId) {
-      return res.status(400).json({ success: false, message: 'User is not associated with any restaurant.' });
+    const targetRestId = await getTargetRestaurantId(req);
+    if (!targetRestId) {
+      return res.status(400).json({ success: false, message: 'No associated restaurant found.' });
     }
 
-    const dishes = await Dish.find({ restaurantId: req.user.restaurantId }).sort({ createdAt: -1 });
+    const dishes = await Dish.find({ restaurantId: targetRestId }).sort({ createdAt: -1 });
     return res.json({ success: true, count: dishes.length, data: dishes });
   } catch (error: any) {
     return res.status(500).json({ success: false, message: 'Failed to retrieve menu dishes.', error: error.message });
@@ -59,12 +69,13 @@ router.get('/restaurant/:restaurantId', async (req, res) => {
 /**
  * @route   POST /api/dishes
  * @desc    Create a new dish in the menu
- * @access  Private (Restaurant Admin only)
+ * @access  Private (Restaurant Admin / Super Admin)
  */
-router.post('/', protect, restrictTo('restaurant_admin'), async (req: AuthRequest, res: Response) => {
+router.post('/', protect, restrictTo('restaurant_admin', 'super_admin'), async (req: AuthRequest, res: Response) => {
   try {
-    if (!req.user || !req.user.restaurantId) {
-      return res.status(400).json({ success: false, message: 'User is not associated with any restaurant.' });
+    const targetRestId = await getTargetRestaurantId(req);
+    if (!targetRestId) {
+      return res.status(400).json({ success: false, message: 'No associated restaurant found.' });
     }
 
     const { name, description, image, category, price, veg, customizations } = req.body;
@@ -74,7 +85,7 @@ router.post('/', protect, restrictTo('restaurant_admin'), async (req: AuthReques
     }
 
     const dish = new Dish({
-      restaurantId: req.user.restaurantId,
+      restaurantId: targetRestId,
       name,
       description,
       image,
@@ -95,15 +106,12 @@ router.post('/', protect, restrictTo('restaurant_admin'), async (req: AuthReques
 /**
  * @route   PATCH /api/dishes/:id
  * @desc    Edit details of a menu dish
- * @access  Private (Restaurant Admin only)
+ * @access  Private (Restaurant Admin / Super Admin)
  */
-router.patch('/:id', protect, restrictTo('restaurant_admin'), async (req: AuthRequest, res: Response) => {
+router.patch('/:id', protect, restrictTo('restaurant_admin', 'super_admin'), async (req: AuthRequest, res: Response) => {
   try {
-    if (!req.user || !req.user.restaurantId) {
-      return res.status(400).json({ success: false, message: 'User is not associated with any restaurant.' });
-    }
-
-    const dish = await Dish.findOne({ _id: req.params.id, restaurantId: req.user.restaurantId });
+    const targetRestId = await getTargetRestaurantId(req);
+    const dish = await Dish.findOne({ _id: req.params.id, restaurantId: targetRestId });
     if (!dish) {
       return res.status(404).json({ success: false, message: 'Dish not found in your restaurant menu.' });
     }
@@ -129,15 +137,12 @@ router.patch('/:id', protect, restrictTo('restaurant_admin'), async (req: AuthRe
 /**
  * @route   PATCH /api/dishes/:id/toggle-availability
  * @desc    Quick toggle to change whether a dish is available
- * @access  Private (Restaurant Admin / Staff)
+ * @access  Private (Restaurant Admin / Staff / Super Admin)
  */
-router.patch('/:id/toggle-availability', protect, restrictTo('restaurant_admin', 'staff'), async (req: AuthRequest, res: Response) => {
+router.patch('/:id/toggle-availability', protect, restrictTo('restaurant_admin', 'staff', 'super_admin'), async (req: AuthRequest, res: Response) => {
   try {
-    if (!req.user || !req.user.restaurantId) {
-      return res.status(400).json({ success: false, message: 'User is not associated with any restaurant.' });
-    }
-
-    const dish = await Dish.findOne({ _id: req.params.id, restaurantId: req.user.restaurantId });
+    const targetRestId = await getTargetRestaurantId(req);
+    const dish = await Dish.findOne({ _id: req.params.id, restaurantId: targetRestId });
     if (!dish) {
       return res.status(404).json({ success: false, message: 'Dish not found in your restaurant menu.' });
     }
@@ -158,15 +163,12 @@ router.patch('/:id/toggle-availability', protect, restrictTo('restaurant_admin',
 /**
  * @route   DELETE /api/dishes/:id
  * @desc    Delete a dish from the menu
- * @access  Private (Restaurant Admin only)
+ * @access  Private (Restaurant Admin / Super Admin)
  */
-router.delete('/:id', protect, restrictTo('restaurant_admin'), async (req: AuthRequest, res: Response) => {
+router.delete('/:id', protect, restrictTo('restaurant_admin', 'super_admin'), async (req: AuthRequest, res: Response) => {
   try {
-    if (!req.user || !req.user.restaurantId) {
-      return res.status(400).json({ success: false, message: 'User is not associated with any restaurant.' });
-    }
-
-    const dish = await Dish.findOneAndDelete({ _id: req.params.id, restaurantId: req.user.restaurantId });
+    const targetRestId = await getTargetRestaurantId(req);
+    const dish = await Dish.findOneAndDelete({ _id: req.params.id, restaurantId: targetRestId });
     if (!dish) {
       return res.status(404).json({ success: false, message: 'Dish not found in your restaurant menu.' });
     }

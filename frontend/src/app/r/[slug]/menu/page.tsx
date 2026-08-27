@@ -654,11 +654,11 @@ export default function CustomerMenuPage() {
     const getStatusPhase = (status: string): number => {
       switch (status) {
         case 'received': return 0;
-        case 'accepted': return 1;
-        case 'preparing': return 2;
-        case 'ready': return 3;
-        case 'served': return 4;
-        case 'completed': return 5;
+        case 'accepted':
+        case 'preparing':
+        case 'ready': return 1;
+        case 'served':
+        case 'completed': return 2;
         case 'cancelled': return -1;
         default: return 0;
       }
@@ -667,10 +667,8 @@ export default function CustomerMenuPage() {
     const currentPhase = getStatusPhase(order.status);
     const milestones = [
       { label: 'Received', icon: Sparkles },
-      { label: 'Accepted', icon: ShieldCheck },
-      { label: 'Cooking', icon: Coffee },
-      { label: 'Ready', icon: Bell },
-      { label: 'Served', icon: CheckCircle2 },
+      { label: 'Accepted', icon: CheckCircle2 },
+      { label: 'Served', icon: Coffee },
     ];
 
     return (
@@ -680,7 +678,7 @@ export default function CustomerMenuPage() {
           <div className="text-center space-y-1">
             <span className="text-[10px] uppercase font-bold text-primary tracking-widest block font-sans">Dine-in Status</span>
             <h2 className="font-serif text-2xl font-black capitalize text-foreground">
-              {order.status === 'cancelled' ? 'Order Cancelled' : order.status === 'completed' ? 'Order Completed' : milestones[Math.min(Math.max(0, currentPhase), 4)].label}
+              {order.status === 'cancelled' ? 'Order Cancelled' : order.status === 'completed' ? 'Order Completed' : milestones[Math.min(Math.max(0, currentPhase), 2)].label}
             </h2>
             <p className="text-[11px] text-muted-foreground leading-relaxed">
               {order.status === 'cancelled'
@@ -707,7 +705,7 @@ export default function CustomerMenuPage() {
               <div className="absolute top-[28px] left-[20px] right-[20px] h-1 bg-secondary rounded-full -z-10">
                 <div 
                   className="h-full bg-primary transition-all duration-700 rounded-full" 
-                  style={{ width: `${(Math.min(currentPhase, 4) / 4) * 100}%` }}
+                  style={{ width: `${(Math.min(currentPhase, 2) / 2) * 100}%` }}
                 />
               </div>
 

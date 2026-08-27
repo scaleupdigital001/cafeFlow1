@@ -171,15 +171,15 @@ export default function OrderStatusPage() {
     );
   }
 
-  // Map progress phases
+  // Map progress phases to 3 customer-facing statuses: Received (0), Accepted (1), Served (2)
   const getStatusPhase = (): number => {
     switch (order.status) {
       case 'received': return 0;
-      case 'accepted': return 1;
-      case 'preparing': return 2;
-      case 'ready': return 3;
-      case 'served': return 4;
-      case 'completed': return 5;
+      case 'accepted':
+      case 'preparing':
+      case 'ready': return 1;
+      case 'served':
+      case 'completed': return 2;
       case 'cancelled': return -1;
       default: return 0;
     }
@@ -187,13 +187,11 @@ export default function OrderStatusPage() {
 
   const currentPhase = getStatusPhase();
 
-  // Helper to draw milestone state
+  // 3 Customer-facing milestones
   const milestones = [
-    { label: 'Received', desc: 'Placed successfully', icon: Sparkles },
-    { label: 'Accepted', desc: 'Sent to kitchen', icon: CheckCircle2 },
-    { label: 'Preparing', desc: 'Chef cooking', icon: ChefHat },
-    { label: 'Ready', desc: 'Awaiting server', icon: Bell },
-    { label: 'Served', desc: 'Dishes served', icon: Coffee },
+    { label: 'Received', desc: 'Order received', icon: Sparkles },
+    { label: 'Accepted', desc: 'Accepted by kitchen', icon: CheckCircle2 },
+    { label: 'Served', desc: 'Food served', icon: Coffee },
   ];
 
   const handleCashPayClick = async () => {
@@ -313,7 +311,7 @@ export default function OrderStatusPage() {
               <div className="absolute top-[28px] left-[20px] right-[20px] h-1 bg-secondary rounded-full -z-10">
                 <div 
                   className="h-full bg-primary transition-all duration-700 rounded-full" 
-                  style={{ width: `${(Math.min(currentPhase, 4) / 4) * 100}%` }}
+                  style={{ width: `${(Math.min(currentPhase, 2) / 2) * 100}%` }}
                 />
               </div>
 
