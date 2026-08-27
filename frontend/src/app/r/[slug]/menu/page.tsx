@@ -112,6 +112,7 @@ export default function CustomerMenuPage() {
   const [activeOrderStatus, setActiveOrderStatus] = useState<string | null>(null);
   const [order, setOrder] = useState<any | null>(null);
   const [bill, setBill] = useState<any | null>(null);
+  const [billRequested, setBillRequested] = useState(false);
 
   // Tab Shell States
   const [activeTab, setActiveTab] = useState<'home' | 'menu' | 'orders' | 'bill'>('menu');
@@ -818,15 +819,30 @@ export default function CustomerMenuPage() {
             
             <div className="pt-4 border-t border-border/40 space-y-3">
               <p className="text-[10px] text-muted-foreground">Ready to leave and want to settle up?</p>
-              <Button
-                onClick={async () => {
-                  setWaiterRequestType('request_bill');
-                  setIsWaiterModalOpen(true);
-                }}
-                className="text-xs font-bold bg-primary hover:bg-primary/90 text-white w-full py-2.5 rounded-xl cursor-pointer"
-              >
-                Request Staff to Print Bill
-              </Button>
+              {billRequested ? (
+                <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400 p-3.5 rounded-xl text-center space-y-1">
+                  <span className="text-xs font-bold block">✓ Bill Request Sent</span>
+                  <p className="text-[10px] text-muted-foreground">Staff has been notified and will bring your bill shortly.</p>
+                </div>
+              ) : (
+                <Button
+                  onClick={async () => {
+                    try {
+                      await api.post('/orders/waiter-request', {
+                        restaurantId: restaurant?._id,
+                        tableNumber: cartTableNumber || '1',
+                        type: 'request_bill',
+                      });
+                      setBillRequested(true);
+                    } catch (err: any) {
+                      alert('Failed to send bill request.');
+                    }
+                  }}
+                  className="text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white w-full py-2.5 rounded-xl cursor-pointer"
+                >
+                  COMPLETE & BILL (Request Checkout)
+                </Button>
+              )}
             </div>
           </Card>
         </main>

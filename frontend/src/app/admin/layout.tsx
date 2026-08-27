@@ -42,7 +42,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const navLinks = [
     { label: 'Overview', href: '/admin/dashboard', icon: LayoutDashboard },
     { label: 'Menu Dishes', href: '/admin/menu', icon: UtensilsCrossed },
-    { label: 'Tables & QRs', href: '/admin/tables', icon: Tablet },
+    { label: 'Table Management', href: '/admin/tables', icon: Tablet },
     { label: 'Staff Roster', href: '/admin/staff', icon: Users },
     { label: 'Cafe Settings', href: '/admin/settings', icon: Settings },
   ];

@@ -71,13 +71,7 @@ export default function AdminMenuPage() {
   const loadMenu = async () => {
     setLoading(true);
     try {
-      const response = await api.get('/dishes/slug/central-cafe'); // Load for the associated tenant
-      // Note: In real production, this routes via api.get('/dishes/restaurant/' + user.restaurantId)
-      // Since our seeder makes 'central-cafe' by default, we can load either slug or fetch via my-restaurant.
-      // Let's load the active user's associated items dynamically!
-      const myRestRes = await api.get('/restaurants/my-restaurant');
-      const activeRestId = myRestRes.data.data._id;
-      const dishesResponse = await api.get(`/dishes/restaurant/${activeRestId}`);
+      const dishesResponse = await api.get('/dishes/my-restaurant');
       setDishes(dishesResponse.data.data);
     } catch (err: any) {
       console.error('Error loading admin menu:', err);

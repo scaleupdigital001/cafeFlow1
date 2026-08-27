@@ -294,6 +294,16 @@ router.patch('/:id/status', protect, restrictTo('restaurant_admin', 'staff'), as
           .populate('orderId')
           .populate('restaurantId', 'name address contact gstNumber paymentSettings');
       }
+
+      // Automatically resolve any pending request_bill requests for this table
+      await WaiterRequest.updateMany(
+        { restaurantId: req.user.restaurantId, tableNumber: order.tableNumber, type: 'request_bill', status: 'pending' },
+        { status: 'resolved' }
+      );
+
+      if (io) {
+        io.to(req.user.restaurantId.toString()).emit('table_status_updated', { tableNumber: order.tableNumber });
+      }
     }
 
     return res.json({ success: true, message: `Order status set to ${status}.`, data: order, bill: populatedBillData });
@@ -334,6 +344,10 @@ router.post('/waiter-request', async (req, res) => {
     const io = req.app.get('io');
     if (io) {
       io.to(restaurantId.toString()).emit('waiter_requested', request);
+      if (type === 'request_bill') {
+        io.to(restaurantId.toString()).emit('bill_requested', { restaurantId, tableNumber });
+        io.to(restaurantId.toString()).emit('table_status_updated', { tableNumber });
+      }
       console.log(`[Socket] Dispatched waiter_requested event to restaurant room: ${restaurantId}`);
     }
 

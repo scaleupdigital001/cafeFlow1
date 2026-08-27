@@ -277,52 +277,13 @@ export default function KitchenDashboard() {
     }
   };
 
-  const handleCompleteAndPrint = async (order: Order) => {
-    if (completingOrderIds.includes(order._id)) return;
-
-    setCompletingOrderIds((prev) => [...prev, order._id]);
+  const handleOrderServed = async (orderId: string) => {
     try {
-      const response = await api.patch(`/orders/${order._id}/status`, { status: 'completed' });
-      const billData = response.data.bill;
-
-      // Remove from local active orders list
-      setOrders((prev) => prev.filter((o) => o._id !== order._id));
-      
-      // Refresh recent bills list
-      fetchRecentBills();
-
-      // Construct thermal receipt data
-      const receiptData: ThermalReceiptData = {
-        restaurantName: restaurant?.name || 'CafeFlow Restaurant',
-        restaurantAddress: (billData?.restaurantId as any)?.address || restaurant?.address || '',
-        restaurantContact: (billData?.restaurantId as any)?.contact || restaurant?.contact || '',
-        gstNumber: (billData?.restaurantId as any)?.gstNumber || restaurant?.gstNumber || '',
-        billNumber: billData?.billNumber || 'INV-COMPLETED',
-        date: billData?.createdAt || new Date().toISOString(),
-        tableNumber: order.tableNumber,
-        customerName: order.customerName,
-        customerPhone: order.phoneNumber,
-        items: order.items.map((i) => ({
-          name: i.name,
-          quantity: i.quantity,
-          price: i.price,
-          customizations: i.customizations,
-          specialInstructions: i.specialInstructions,
-        })),
-        subtotal: order.subtotal || billData?.subtotal || 0,
-        tax: order.tax || billData?.tax || 0,
-        taxRate: restaurant?.taxRate || 5,
-        totalAmount: order.totalAmount || billData?.totalAmount || 0,
-        paymentStatus: billData?.paymentStatus || 'unpaid',
-        paymentMethod: billData?.paymentMethod || '',
-      };
-
-      // Trigger thermal print workflow
-      await printThermalReceipt(receiptData);
+      const response = await api.patch(`/orders/${orderId}/status`, { status: 'served' });
+      const updated = response.data.data;
+      setOrders((prev) => prev.map((o) => (o._id === orderId ? updated : o)));
     } catch (err: any) {
-      alert(err.response?.data?.message || 'Failed to complete order and generate bill.');
-    } finally {
-      setCompletingOrderIds((prev) => prev.filter((id) => id !== order._id));
+      alert(err.response?.data?.message || 'Failed to mark order as served.');
     }
   };
 
@@ -631,8 +592,7 @@ export default function KitchenDashboard() {
                     <div className="p-4 border-t border-border/40 bg-secondary/10 flex items-center justify-between gap-3">
                       <button
                         onClick={() => handleCancelOrder(order._id)}
-                        disabled={completingOrderIds.includes(order._id)}
-                        className="px-3 py-2 bg-background border border-border text-destructive hover:bg-destructive/10 hover:border-destructive/30 rounded-lg text-xs font-semibold cursor-pointer transition-all shrink-0 disabled:opacity-50"
+                        className="px-3 py-2 bg-background border border-border text-destructive hover:bg-destructive/10 hover:border-destructive/30 rounded-lg text-xs font-semibold cursor-pointer transition-all shrink-0"
                         title="Cancel Order"
                       >
                         Cancel
@@ -650,18 +610,18 @@ export default function KitchenDashboard() {
                         ) : (
                           <Button
                             size="sm"
-                            disabled={completingOrderIds.includes(order._id)}
-                            onClick={() => handleCompleteAndPrint(order)}
-                            className="w-full text-xs font-bold gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer shadow-emerald-500/10"
+                            disabled={order.status === 'served'}
+                            onClick={() => handleOrderServed(order._id)}
+                            className="w-full text-xs font-bold gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer shadow-emerald-500/10 disabled:opacity-60"
                           >
-                            {completingOrderIds.includes(order._id) ? (
+                            {order.status === 'served' ? (
                               <>
-                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                Completing & Printing...
+                                <CheckCircle2 className="w-3.5 h-3.5 text-white" />
+                                Order Served (Waiting Bill)
                               </>
                             ) : (
                               <>
-                                Complete & Print Bill <Printer className="w-3.5 h-3.5" />
+                                Order Served <CheckCircle2 className="w-3.5 h-3.5" />
                               </>
                             )}
                           </Button>

@@ -25,6 +25,24 @@ router.get('/slug/:slug', async (req, res) => {
 });
 
 /**
+ * @route   GET /api/dishes/my-restaurant
+ * @desc    Get all dishes for the logged-in restaurant tenant
+ * @access  Private (Restaurant Admin / Staff)
+ */
+router.get('/my-restaurant', protect, restrictTo('restaurant_admin', 'staff'), async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user || !req.user.restaurantId) {
+      return res.status(400).json({ success: false, message: 'User is not associated with any restaurant.' });
+    }
+
+    const dishes = await Dish.find({ restaurantId: req.user.restaurantId }).sort({ createdAt: -1 });
+    return res.json({ success: true, count: dishes.length, data: dishes });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: 'Failed to retrieve menu dishes.', error: error.message });
+  }
+});
+
+/**
  * @route   GET /api/dishes/restaurant/:restaurantId
  * @desc    Public route to get all dishes for a restaurant using ID
  * @access  Public
