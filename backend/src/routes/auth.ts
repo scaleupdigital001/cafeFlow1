@@ -83,6 +83,52 @@ router.post('/register-restaurant', async (req: Request, res: Response) => {
 });
 
 /**
+ * Helper to ensure the default Super Admin account exists idempotently without wiping existing database data
+ */
+export const ensureSuperAdmin = async () => {
+  try {
+    const superAdminEmail = 'superadmin@cafeflow.com';
+    let user = await User.findOne({ email: superAdminEmail });
+
+    if (!user) {
+      const hashedPassword = await bcrypt.hash('superadmin123', 10);
+      user = new User({
+        name: 'CafeFlow Admin',
+        email: superAdminEmail,
+        password: hashedPassword,
+        role: 'super_admin',
+      });
+      await user.save();
+      console.log('[Auth] Super Admin account created: superadmin@cafeflow.com');
+    } else {
+      const isMatch = await bcrypt.compare('superadmin123', user.password || '');
+      if (!isMatch || user.role !== 'super_admin') {
+        user.password = await bcrypt.hash('superadmin123', 10);
+        user.role = 'super_admin';
+        await user.save();
+        console.log('[Auth] Super Admin account password/role synchronized.');
+      }
+    }
+  } catch (error) {
+    console.error('[Auth] Failed to ensure Super Admin account:', error);
+  }
+};
+
+/**
+ * @route   GET /api/auth/ensure-superadmin
+ * @desc    Safely initialize/verify Super Admin account idempotently without touching other data
+ * @access  Public
+ */
+router.get('/ensure-superadmin', async (req: Request, res: Response) => {
+  try {
+    await ensureSuperAdmin();
+    return res.json({ success: true, message: 'Super Admin account verified and active.' });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: 'Failed to ensure Super Admin.', error: error.message });
+  }
+});
+
+/**
  * @route   GET /api/auth/seed
  * @desc    Seed the database with sample data if it is empty
  * @access  Public
@@ -381,7 +427,7 @@ router.post('/login', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'Please provide email and password.' });
     }
 
-    const user = await User.findOne({ email: email.toLowerCase() });
+    const user = await User.findOne({ email: String(email).trim().toLowerCase() });
     if (!user) {
       return res.status(401).json({ success: false, message: 'Invalid credentials.' });
     }

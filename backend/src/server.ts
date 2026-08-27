@@ -15,7 +15,7 @@ import { validateEnv } from './utils/env';
 validateEnv();
 
 // Route Imports
-import authRoutes from './routes/auth';
+import authRoutes, { ensureSuperAdmin } from './routes/auth';
 import restaurantRoutes from './routes/restaurant';
 import dishRoutes from './routes/dish';
 import tableRoutes from './routes/table';
@@ -200,8 +200,9 @@ mongoose
     serverSelectionTimeoutMS: 5000,
     socketTimeoutMS: 45000,
   })
-  .then(() => {
+  .then(async () => {
     console.log('[Database] MongoDB connection pool initialized (maxPoolSize: 10).');
+    await ensureSuperAdmin();
     server.listen(PORT, () => {
       console.log(`[Server] CafeFlow backend listening on port ${PORT}`);
     });
