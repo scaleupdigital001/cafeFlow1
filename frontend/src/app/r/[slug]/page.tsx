@@ -27,10 +27,14 @@ interface Dish {
   veg: boolean;
 }
 
+import { useCartStore } from '../../../store/cartStore';
+
 export default function RestaurantLandingPage() {
   const params = useParams();
   const router = useRouter();
   const slug = params.slug as string;
+  const cartTableNumber = useCartStore((state) => state.tableNumber);
+  const menuHref = cartTableNumber ? `/r/${slug}/menu/table/${cartTableNumber}` : `/r/${slug}/menu`;
 
   const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
   const [featuredDishes, setFeaturedDishes] = useState<Dish[]>([]);
@@ -105,7 +109,7 @@ export default function RestaurantLandingPage() {
           </nav>
 
           <Link
-            href={`/r/${slug}/menu`}
+            href={menuHref}
             className="px-5 py-2.5 bg-primary text-primary-foreground rounded-full text-sm font-semibold hover:bg-primary/95 shadow-md shadow-primary/15 transition-all hover:scale-105"
           >
             Order Online
@@ -138,7 +142,7 @@ export default function RestaurantLandingPage() {
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-4">
             <Link
-              href={`/r/${slug}/menu`}
+              href={menuHref}
               className="w-full sm:w-auto px-8 py-3.5 bg-primary text-primary-foreground font-bold rounded-full shadow-lg shadow-primary/20 hover:bg-primary/95 transition-all hover:scale-105 text-center"
             >
               Explore Digital Menu
@@ -239,7 +243,7 @@ export default function RestaurantLandingPage() {
 
           <div className="text-center pt-4">
             <Link
-              href={`/r/${slug}/menu`}
+              href={menuHref}
               className="inline-flex items-center gap-2 px-6 py-3 border border-primary text-primary font-bold rounded-full hover:bg-primary hover:text-primary-foreground transition-all duration-300"
             >
               View Full Menu <Utensils className="w-4 h-4" />

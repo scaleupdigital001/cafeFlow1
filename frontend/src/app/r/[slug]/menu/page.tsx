@@ -115,6 +115,8 @@ export default function CustomerMenuPage() {
   const [order, setOrder] = useState<any | null>(null);
   const [bill, setBill] = useState<any | null>(null);
   const billRequested = order?.billRequested === true;
+  const effectiveTableNumber = cartTableNumber || order?.tableNumber || null;
+  const isTableValid = Boolean(effectiveTableNumber);
 
   // Tab Shell States
   const [activeTab, setActiveTab] = useState<'home' | 'menu' | 'orders' | 'bill'>('menu');
@@ -132,10 +134,15 @@ export default function CustomerMenuPage() {
   const handleCallWaiterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setWaiterRequestLoading(true);
+    if (!effectiveTableNumber) {
+      alert('Table not detected. Please scan the QR code on your table.');
+      setWaiterRequestLoading(false);
+      return;
+    }
     try {
       await api.post('/orders/waiter-request', {
         restaurantId: restaurant?._id || cartRestaurantId,
-        tableNumber: cartTableNumber || '1',
+        tableNumber: effectiveTableNumber,
         type: waiterRequestType,
       });
       setWaiterRequestSuccess(true);
@@ -327,9 +334,9 @@ export default function CustomerMenuPage() {
         const dishesRes = await api.get(`/dishes/slug/${slug}`);
         setDishes(dishesRes.data.data);
 
-        // If table parameters are not initialized (direct web URL access), default to mock Table 1
-        if (!cartTableNumber || cartRestaurantId !== restData._id) {
-          setTableContext(restData._id, '1', restData.taxRate || 5);
+        // Clear items if changing restaurant tenant without forcing a guessed table number
+        if (cartRestaurantId && cartRestaurantId !== restData._id) {
+          clearCart();
         }
       } catch (err: any) {
         console.error('Menu load error:', err);
@@ -461,11 +468,17 @@ export default function CustomerMenuPage() {
 
     const placeOrderWithCoords = async (latitude?: number, longitude?: number) => {
       try {
+        if (!effectiveTableNumber) {
+          setCheckoutError('Table number missing. Please scan your table QR code to place an order.');
+          setOtpLoading(false);
+          return;
+        }
+
         const orderData = {
           restaurantId: restaurant._id,
           customerName,
           phoneNumber: cleanedPhone,
-          tableNumber: cartTableNumber || '1',
+          tableNumber: effectiveTableNumber,
           items: cartItems.map((item) => ({
             dishId: item.dishId,
             name: item.name,
@@ -578,7 +591,7 @@ export default function CustomerMenuPage() {
           <div className="absolute inset-0 bg-gradient-to-t from-stone-900/60 to-transparent" />
           <div className="absolute bottom-4 left-4 text-white">
             <h3 className="font-serif font-black text-xl">{restaurant.name}</h3>
-            <p className="text-xs font-light text-stone-200">Contactless QR Dine-in Table {cartTableNumber || '1'}</p>
+            <p className="text-xs font-light text-stone-200">Contactless QR Dine-in Table {effectiveTableNumber || 'Not Detected'}</p>
           </div>
         </div>
 
@@ -827,10 +840,14 @@ export default function CustomerMenuPage() {
               ) : (
                 <Button
                   onClick={async () => {
+                    if (!effectiveTableNumber) {
+                      alert('Table number not detected. Please scan your table QR code.');
+                      return;
+                    }
                     try {
                       await api.post('/orders/waiter-request', {
                         restaurantId: restaurant?._id,
-                        tableNumber: cartTableNumber || '1',
+                        tableNumber: effectiveTableNumber,
                         type: 'request_bill',
                       });
                       alert('Bill requested successfully! The waiter will bring it shortly.');
@@ -1237,8 +1254,12 @@ export default function CustomerMenuPage() {
             </div>
             <div>
               <h2 className="font-serif font-bold text-sm tracking-tight">{restaurant.name}</h2>
-              <span className="text-[10px] bg-accent/60 text-accent-foreground border border-accent px-2 py-0.5 rounded-full font-bold">
-                Dine-in: Table {cartTableNumber || '1'}
+              <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${
+                isTableValid 
+                  ? 'bg-accent/60 text-accent-foreground border-accent' 
+                  : 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30'
+              }`}>
+                {isTableValid ? `Dine-in: Table ${effectiveTableNumber}` : 'Table Not Detected'}
               </span>
             </div>
           </Link>
@@ -1267,6 +1288,15 @@ export default function CustomerMenuPage() {
           </button>
         </div>
       </header>
+
+      {!isTableValid && (
+        <div className="bg-amber-500/10 border-b border-amber-500/20 text-amber-800 dark:text-amber-400 px-4 py-2.5 text-xs font-semibold flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>Table not detected — please rescan your table's QR code to enable ordering and table service.</span>
+          </div>
+        </div>
+      )}
 
 
 
@@ -1589,7 +1619,7 @@ export default function CustomerMenuPage() {
               /* Append Order Confirmation Mode */
               <form onSubmit={handleAppendToOrder} className="space-y-5 text-sm">
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  You already have an active order in progress at Table {cartTableNumber || '1'}. These additional items will be added directly to your existing bill without re-verifying your details.
+                  You already have an active order in progress at Table {effectiveTableNumber || 'Not Detected'}. These additional items will be added directly to your existing bill without re-verifying your details.
                 </p>
 
                 <div className="bg-amber-500/10 border border-amber-500/20 text-amber-800 dark:text-amber-400 p-3.5 rounded-xl text-xs flex gap-2">
@@ -1686,7 +1716,7 @@ export default function CustomerMenuPage() {
                 <Bell className="w-6 h-6 text-amber-500 animate-pulse" />
               </div>
               <h3 className="font-serif font-bold text-base md:text-lg">Table Assistance</h3>
-              <p className="text-xs text-muted-foreground mt-0.5">Need help at Table {cartTableNumber || '1'}?</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Need help at Table {effectiveTableNumber || 'Not Detected'}?</p>
             </div>
 
             {waiterRequestSuccess ? (

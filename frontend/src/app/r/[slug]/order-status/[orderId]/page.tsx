@@ -277,7 +277,7 @@ export default function OrderStatusPage() {
     <div className="bg-background text-foreground min-h-screen pb-12">
       {/* Header */}
       <header className="bg-background/80 backdrop-blur border-b border-border/50 px-4 py-3 flex items-center justify-between sticky top-0 z-40">
-        <Link href={`/r/${slug}/menu`} className="flex items-center gap-1.5 text-xs font-bold text-muted-foreground hover:text-foreground transition-all cursor-pointer">
+        <Link href={order?.tableNumber ? `/r/${slug}/menu/table/${order.tableNumber}` : `/r/${slug}/menu`} className="flex items-center gap-1.5 text-xs font-bold text-muted-foreground hover:text-foreground transition-all cursor-pointer">
           <ArrowLeft className="w-4 h-4" /> Back to Menu
         </Link>
         <h2 className="font-serif font-bold text-sm tracking-tight text-center">Track Order</h2>
@@ -605,7 +605,7 @@ export default function OrderStatusPage() {
         {order.status !== 'completed' && order.status !== 'cancelled' && (
           <div className="text-center pt-2">
             <Link 
-              href={`/r/${slug}/menu`} 
+              href={order?.tableNumber ? `/r/${slug}/menu/table/${order.tableNumber}` : `/r/${slug}/menu`} 
               className="inline-flex items-center justify-center gap-1.5 px-6 py-3 w-full bg-amber-600 hover:bg-amber-700 text-white rounded-2xl text-sm font-bold shadow-lg shadow-amber-500/10 cursor-pointer transition-all hover:scale-[1.01]"
             >
               <Plus className="w-4.5 h-4.5" /> Order More Items
