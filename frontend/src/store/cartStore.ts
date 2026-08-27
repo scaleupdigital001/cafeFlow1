@@ -68,9 +68,13 @@ export const useCartStore = create<CartState>((set, get) => ({
     setSafeLocalStorage('cart_tableNumber', tableNumber);
     setSafeLocalStorage('cart_taxRate', taxRate.toString());
 
-    // If scanning a new restaurant table, clear existing cart items
+    // If scanning a new table or restaurant, clear unplaced cart items
     const currentRestaurantId = get().restaurantId;
-    if (currentRestaurantId && currentRestaurantId !== restaurantId) {
+    const currentTableNumber = get().tableNumber;
+    if (
+      (currentRestaurantId && currentRestaurantId !== restaurantId) ||
+      (currentTableNumber && currentTableNumber !== tableNumber)
+    ) {
       set({ items: [], restaurantId, tableNumber, taxRate });
     } else {
       set({ restaurantId, tableNumber, taxRate });
