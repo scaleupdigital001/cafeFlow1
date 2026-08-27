@@ -16,54 +16,8 @@ import {
   Sparkles, Coffee, AlertTriangle, CheckCircle2, X, Plus, Smartphone, Printer
 } from 'lucide-react';
 
-interface Bill {
-  _id: string;
-  billNumber: string;
-  totalAmount: number;
-  subtotal?: number;
-  tax?: number;
-  pdfUrl?: string;
-  orderId?: any;
-  restaurantId?: any;
-  paymentStatus?: 'pending' | 'verifying' | 'paid';
-  paymentMethod?: 'upi_link' | 'cash';
-  createdAt: string;
-}
-
-interface WaiterRequest {
-  _id: string;
-  tableNumber: string;
-  type: 'call_waiter' | 'request_water' | 'request_bill' | 'other';
-  status: 'pending';
-  createdAt: string;
-}
-
-
-interface OrderItem {
-  dishId: string;
-  name: string;
-  price: number;
-  quantity: number;
-  customizations?: {
-    name: string;
-    selectedOption: string;
-    extraPrice: number;
-  }[];
-  specialInstructions?: string;
-}
-
-interface Order {
-  _id: string;
-  customerName: string;
-  phoneNumber: string;
-  tableNumber: string;
-  items: OrderItem[];
-  status: 'received' | 'accepted' | 'preparing' | 'ready' | 'served' | 'completed' | 'cancelled';
-  subtotal?: number;
-  tax?: number;
-  totalAmount: number;
-  createdAt: string;
-}
+import { Order, OrderItem, WaiterRequest, Bill } from '../../types';
+import { formatCurrency } from '../../lib/formatters';
 
 export default function KitchenDashboard() {
   const router = useRouter();

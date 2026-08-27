@@ -15,61 +15,8 @@ import {
   Smartphone, RefreshCw, X, Receipt, ShoppingBag, AlertTriangle, Check
 } from 'lucide-react';
 
-interface Table {
-  _id: string;
-  tableNumber: string;
-  qrCodeUrl?: string;
-  createdAt: string;
-}
-
-interface OrderItem {
-  dishId: string;
-  name: string;
-  price: number;
-  quantity: number;
-  customizations?: {
-    name: string;
-    selectedOption: string;
-    extraPrice: number;
-  }[];
-  specialInstructions?: string;
-}
-
-interface Order {
-  _id: string;
-  customerName: string;
-  phoneNumber: string;
-  tableNumber: string;
-  items: OrderItem[];
-  status: 'received' | 'accepted' | 'preparing' | 'ready' | 'served' | 'completed' | 'cancelled';
-  subtotal?: number;
-  tax?: number;
-  totalAmount: number;
-  createdAt: string;
-}
-
-interface WaiterRequest {
-  _id: string;
-  tableNumber: string;
-  type: 'call_waiter' | 'request_water' | 'request_bill' | 'other';
-  status: 'pending' | 'resolved';
-  createdAt: string;
-}
-
-interface Bill {
-  _id: string;
-  billNumber: string;
-  totalAmount: number;
-  subtotal?: number;
-  tax?: number;
-  pdfUrl?: string;
-  orderId?: any;
-  restaurantId?: any;
-  tableNumber?: string;
-  paymentStatus?: 'pending' | 'verifying' | 'paid';
-  paymentMethod?: 'upi_link' | 'cash';
-  createdAt: string;
-}
+import { Table, Order, OrderItem, WaiterRequest, Bill } from '../../../types';
+import { formatCurrency } from '../../../lib/formatters';
 
 export default function AdminTablesPage() {
   const { user, restaurant } = useAuthStore();
@@ -502,7 +449,7 @@ export default function AdminTablesPage() {
                           </div>
                           <div className="flex justify-between items-center border-t border-border/40 pt-2 font-extrabold text-sm text-foreground">
                             <span>Current Total:</span>
-                            <span className="text-primary text-base">Rs. {info.totalAmount.toFixed(2)}</span>
+                            <span className="text-primary text-base">{formatCurrency(info.totalAmount)}</span>
                           </div>
                         </div>
                       ) : (

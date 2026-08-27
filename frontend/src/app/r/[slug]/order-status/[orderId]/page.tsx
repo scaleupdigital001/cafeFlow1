@@ -16,32 +16,8 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 
-interface OrderItem {
-  dishId: string;
-  name: string;
-  price: number;
-  quantity: number;
-  customizations?: {
-    name: string;
-    selectedOption: string;
-    extraPrice: number;
-  }[];
-  specialInstructions?: string;
-}
-
-interface Order {
-  _id: string;
-  restaurantId: string;
-  customerName: string;
-  phoneNumber: string;
-  tableNumber: string;
-  items: OrderItem[];
-  status: 'received' | 'accepted' | 'preparing' | 'ready' | 'served' | 'completed' | 'cancelled';
-  subtotal: number;
-  tax: number;
-  totalAmount: number;
-  createdAt: string;
-}
+import { Order, OrderItem } from '../../../../../types';
+import { formatCurrency } from '../../../../../lib/formatters';
 
 interface Bill {
   _id: string;
