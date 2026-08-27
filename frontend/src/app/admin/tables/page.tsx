@@ -94,17 +94,19 @@ export default function AdminTablesPage() {
 
     const handleNewOrder = (order?: Order) => {
       if (!order?._id || !order?.tableNumber) return fetchAllData();
-      setActiveOrders((prev) => [order, ...prev.filter((o) => o._id !== order._id)]);
+      const orderIdStr = String(order._id);
+      setActiveOrders((prev) => [order, ...prev.filter((o) => String(o._id) !== orderIdStr)]);
     };
 
     const handleOrderUpdated = (order?: Order) => {
       if (!order?._id) return fetchAllData();
+      const orderIdStr = String(order._id);
       if (order.status === 'completed' || order.status === 'cancelled') {
-        setActiveOrders((prev) => prev.filter((o) => o._id !== order._id));
+        setActiveOrders((prev) => prev.filter((o) => String(o._id) !== orderIdStr));
       } else {
         setActiveOrders((prev) =>
-          prev.some((o) => o._id === order._id)
-            ? prev.map((o) => (o._id === order._id ? order : o))
+          prev.some((o) => String(o._id) === orderIdStr)
+            ? prev.map((o) => (String(o._id) === orderIdStr ? order : o))
             : [order, ...prev]
         );
       }
@@ -112,12 +114,14 @@ export default function AdminTablesPage() {
 
     const handleWaiterRequest = (req?: WaiterRequest) => {
       if (!req?._id || !req?.tableNumber) return fetchAllData();
-      setWaiterRequests((prev) => [req, ...prev.filter((r) => r._id !== req._id)]);
+      const reqIdStr = String(req._id);
+      setWaiterRequests((prev) => [req, ...prev.filter((r) => String(r._id) !== reqIdStr)]);
     };
 
     const handleWaiterRequestResolved = (payload?: { _id: string }) => {
       if (!payload?._id) return fetchAllData();
-      setWaiterRequests((prev) => prev.filter((r) => r._id !== payload._id));
+      const reqIdStr = String(payload._id);
+      setWaiterRequests((prev) => prev.filter((r) => String(r._id) !== reqIdStr));
     };
 
     const handleBillPaymentVerifying = (data?: { billId: string; tableNumber: string }) => {
@@ -134,14 +138,20 @@ export default function AdminTablesPage() {
       );
     };
 
-    const handleBillPaymentApproved = (payload?: { billId: string }) => {
+    const handleBillPaymentApproved = (payload?: { billId: string; orderId?: string }) => {
       if (!payload?.billId) return fetchAllData();
-      setRecentBills((prev) => prev.filter((b) => b._id !== payload.billId));
+      const billIdStr = String(payload.billId);
+      setRecentBills((prev) => prev.filter((b) => String(b._id) !== billIdStr));
+      if (payload.orderId) {
+        const orderIdStr = String(payload.orderId);
+        setActiveOrders((prev) => prev.filter((o) => String(o._id) !== orderIdStr));
+      }
     };
 
     const handleBillReady = (bill?: Bill) => {
       if (!bill?._id) return fetchAllData();
-      setRecentBills((prev) => [bill, ...prev.filter((b) => b._id !== bill._id)]);
+      const billIdStr = String(bill._id);
+      setRecentBills((prev) => [bill, ...prev.filter((b) => String(b._id) !== billIdStr)]);
     };
 
     socket.on('new_order', handleNewOrder);
@@ -361,6 +371,15 @@ export default function AdminTablesPage() {
       } catch (printErr) {
         console.error('Thermal print error:', printErr);
       }
+
+      // Instantly remove completed order from activeOrders state by Order._id
+      const completedOrderIdStr = String(order._id);
+      setActiveOrders((prev) => prev.filter((o) => String(o._id) !== completedOrderIdStr));
+      if (info?.matchingBill) {
+        const billIdStr = String(info.matchingBill._id);
+        setRecentBills((prev) => prev.filter((b) => String(b._id) !== billIdStr));
+      }
+      setWaiterRequests((prev) => prev.filter((r) => r.tableNumber !== order.tableNumber || r.type !== 'request_bill'));
 
       // Close modal and refresh dashboard state
       setSelectedTableNum(null);
