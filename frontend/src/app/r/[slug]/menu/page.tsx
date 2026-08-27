@@ -45,6 +45,8 @@ interface Restaurant {
   name: string;
   slug: string;
   logo?: string;
+  address?: string;
+  contact?: string;
   taxRate: number;
 }
 
@@ -112,7 +114,7 @@ export default function CustomerMenuPage() {
   const [activeOrderStatus, setActiveOrderStatus] = useState<string | null>(null);
   const [order, setOrder] = useState<any | null>(null);
   const [bill, setBill] = useState<any | null>(null);
-  const billRequested = activeOrder?.billRequested === true;
+  const billRequested = order?.billRequested === true;
 
   // Tab Shell States
   const [activeTab, setActiveTab] = useState<'home' | 'menu' | 'orders' | 'bill'>('menu');
