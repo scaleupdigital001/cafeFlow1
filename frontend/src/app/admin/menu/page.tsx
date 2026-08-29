@@ -66,6 +66,15 @@ export default function AdminMenuPage() {
   const defaultCategories = ['Coffee', 'Tea', 'Mocktails', 'Snacks', 'Breakfast', 'Lunch', 'Dinner', 'Desserts'];
   const activeCategories = Array.from(new Set(dishes.map((d) => d.category))).filter(Boolean);
   const categoriesList = Array.from(new Set([...defaultCategories, ...activeCategories]));
+  // Reusable filtering mechanism: A category is displayed in active UI only if it contains at least one menu item
+  const visibleCategories = categoriesList.filter((cat) => dishes.some((d) => d.category === cat));
+
+  // Automatically reset category filter to 'All' if selected category becomes empty (e.g. last item deleted/moved)
+  useEffect(() => {
+    if (categoryFilter !== 'All' && !visibleCategories.includes(categoryFilter)) {
+      setCategoryFilter('All');
+    }
+  }, [visibleCategories, categoryFilter]);
 
   // Load menu items
   const loadMenu = async () => {
@@ -256,7 +265,7 @@ export default function AdminMenuPage() {
             >
               All Categories
             </button>
-            {categoriesList.map((cat) => (
+            {visibleCategories.map((cat) => (
               <button
                 key={cat}
                 onClick={() => setCategoryFilter(cat)}
