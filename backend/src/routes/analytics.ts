@@ -172,7 +172,7 @@ router.get('/peak-hours', protect, restrictTo('restaurant_admin'), async (req: A
 
 /**
  * @route   GET /api/analytics/daily-report
- * @desc    Generate daily sales report in CSV format
+ * @desc    Generate date-range sales report in CSV format
  * @access  Private (Restaurant Admin only)
  */
 router.get('/daily-report', protect, restrictTo('restaurant_admin'), async (req: AuthRequest, res: Response) => {
@@ -182,19 +182,16 @@ router.get('/daily-report', protect, restrictTo('restaurant_admin'), async (req:
     }
     const restaurantId = req.user.restaurantId;
 
-    const dateParam = req.query.date as string; // YYYY-MM-DD
-    let startDate: Date;
-    let endDate: Date;
+    // Accept startDate & endDate, or fallback to single date param, or fallback to today
+    const dateParam = req.query.date as string;
+    const startDateParam = (req.query.startDate as string) || dateParam || new Date().toISOString().split('T')[0];
+    const endDateParam = (req.query.endDate as string) || dateParam || startDateParam;
 
-    if (dateParam) {
-      const parts = dateParam.split('-');
-      startDate = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]), 0, 0, 0);
-      endDate = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]), 23, 59, 59, 999);
-    } else {
-      const now = new Date();
-      startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
-      endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-    }
+    const startParts = startDateParam.split('-');
+    const endParts = endDateParam.split('-');
+
+    const startDate = new Date(Number(startParts[0]), Number(startParts[1]) - 1, Number(startParts[2]), 0, 0, 0, 0);
+    const endDate = new Date(Number(endParts[0]), Number(endParts[1]) - 1, Number(endParts[2]), 23, 59, 59, 999);
 
     const restaurant = await Restaurant.findById(restaurantId);
     const cafeName = restaurant ? restaurant.name : 'Central Cafe & Bistro';
@@ -203,7 +200,15 @@ router.get('/daily-report', protect, restrictTo('restaurant_admin'), async (req:
       restaurantId,
       paymentStatus: 'paid',
       updatedAt: { $gte: startDate, $lte: endDate }
-    }).populate('orderId');
+    }).populate('orderId').sort({ updatedAt: 1 }).lean();
+
+    // Scenario C: Zero matching bills in range -> Return HTTP 404 JSON error
+    if (bills.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: `No settled transactions found between ${startDateParam} and ${endDateParam}.`
+      });
+    }
 
     const totalBills = bills.length;
     const totalRevenue = bills.reduce((sum, b) => sum + b.totalAmount, 0);
@@ -212,14 +217,50 @@ router.get('/daily-report', protect, restrictTo('restaurant_admin'), async (req:
     const upiRevenue = bills.filter(b => b.paymentMethod === 'upi_link').reduce((sum, b) => sum + b.totalAmount, 0);
     const cashRevenue = bills.filter(b => b.paymentMethod === 'cash').reduce((sum, b) => sum + b.totalAmount, 0);
 
-    const reportDateStr = startDate.toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' });
+    // Compute actual date bounds of found data
+    const actualStart = new Date(bills[0].updatedAt);
+    const actualEnd = new Date(bills[bills.length - 1].updatedAt);
+    const actualStartStr = actualStart.toISOString().split('T')[0];
+    const actualEndStr = actualEnd.toISOString().split('T')[0];
 
-    let csv = `DAILY SALES REPORT,${cafeName.replace(/,/g, ' ')}\n`;
-    csv += `Report Date,${reportDateStr}\n\n`;
+    const isSingleDay = startDateParam === endDateParam;
+    const requestedRangeStr = isSingleDay ? startDateParam : `${startDateParam} to ${endDateParam}`;
+    const actualRangeStr = actualStartStr === actualEndStr ? actualStartStr : `${actualStartStr} to ${actualEndStr}`;
+    const isPartialRange = !isSingleDay && (actualStartStr !== startDateParam || actualEndStr !== endDateParam);
+
+    let csv = `SALES REPORT,${cafeName.replace(/,/g, ' ')}\n`;
+    csv += `Requested Period,${requestedRangeStr}\n`;
+    csv += `Actual Data Period,${actualRangeStr}\n`;
+    if (isPartialRange) {
+      csv += `Data Status,Partial data available (No transactions prior to ${actualStartStr} or after ${actualEndStr} within range)\n`;
+    }
+    csv += `\n`;
 
     csv += `SUMMARY METRICS\n`;
     csv += `Total Bills,Total Subtotal (Rs.),Total Tax (Rs.),UPI Revenue (Rs.),Cash Revenue (Rs.),Total Revenue (Rs.)\n`;
     csv += `${totalBills},${totalSubtotal.toFixed(2)},${totalTax.toFixed(2)},${upiRevenue.toFixed(2)},${cashRevenue.toFixed(2)},${totalRevenue.toFixed(2)}\n\n`;
+
+    // Per-day breakdown for multi-day ranges
+    const dayMap = new Map<string, { count: number; subtotal: number; tax: number; upi: number; cash: number; total: number }>();
+    bills.forEach(bill => {
+      const dStr = new Date(bill.updatedAt).toISOString().split('T')[0];
+      const curr = dayMap.get(dStr) || { count: 0, subtotal: 0, tax: 0, upi: 0, cash: 0, total: 0 };
+      dayMap.set(dStr, {
+        count: curr.count + 1,
+        subtotal: curr.subtotal + bill.subtotal,
+        tax: curr.tax + bill.tax,
+        upi: curr.upi + (bill.paymentMethod === 'upi_link' ? bill.totalAmount : 0),
+        cash: curr.cash + (bill.paymentMethod === 'cash' ? bill.totalAmount : 0),
+        total: curr.total + bill.totalAmount
+      });
+    });
+
+    csv += `DAILY BREAKDOWN\n`;
+    csv += `Date,Total Bills,Subtotal (Rs.),Tax (Rs.),UPI Revenue (Rs.),Cash Revenue (Rs.),Total Revenue (Rs.)\n`;
+    dayMap.forEach((val, key) => {
+      csv += `${key},${val.count},${val.subtotal.toFixed(2)},${val.tax.toFixed(2)},${val.upi.toFixed(2)},${val.cash.toFixed(2)},${val.total.toFixed(2)}\n`;
+    });
+    csv += `\n`;
 
     const itemMap = new Map<string, { quantity: number; revenue: number }>();
     bills.forEach(bill => {
@@ -238,7 +279,7 @@ router.get('/daily-report', protect, restrictTo('restaurant_admin'), async (req:
     csv += `DISH SALES BREAKDOWN\n`;
     csv += `Dish Name,Quantity Sold,Estimated Revenue (Rs.)\n`;
     if (itemMap.size === 0) {
-      csv += `No dishes sold on this date,0,0.00\n`;
+      csv += `No dishes sold in this period,0,0.00\n`;
     } else {
       itemMap.forEach((val, key) => {
         csv += `"${key.replace(/"/g, '""')}",${val.quantity},${val.revenue.toFixed(2)}\n`;
@@ -247,32 +288,29 @@ router.get('/daily-report', protect, restrictTo('restaurant_admin'), async (req:
     csv += `\n`;
 
     csv += `TRANSACTION DETAILS\n`;
-    csv += `Bill Number,Table,Customer Name,Subtotal (Rs.),Tax (Rs.),Total Amount (Rs.),Payment Method,Settled Time\n`;
-    
-    if (bills.length === 0) {
-      csv += `No transactions settled on this date,-,-,0.00,0.00,0.00,-,-\n`;
-    } else {
-      bills.forEach(bill => {
-        const order = bill.orderId as any;
-        const custName = order ? order.customerName : 'Walk-in';
-        const tableNum = order ? order.tableNumber : 'N/A';
-        const timeStr = new Date(bill.updatedAt).toLocaleTimeString('en-US', {
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12: true
-        });
-        const methodStr = bill.paymentMethod === 'cash' ? 'Cash' : 'UPI';
-        csv += `${bill.billNumber},${tableNum},"${custName.replace(/"/g, '""')}",${bill.subtotal.toFixed(2)},${bill.tax.toFixed(2)},${bill.totalAmount.toFixed(2)},${methodStr},${timeStr}\n`;
-      });
-    }
+    csv += `Bill Number,Table,Customer Name,Subtotal (Rs.),Tax (Rs.),Total Amount (Rs.),Payment Method,Settled Date & Time\n`;
 
-    const filenameDate = dateParam || new Date().toISOString().split('T')[0];
+    bills.forEach(bill => {
+      const order = bill.orderId as any;
+      const custName = order ? order.customerName : 'Walk-in';
+      const tableNum = order ? order.tableNumber : 'N/A';
+      const dateObj = new Date(bill.updatedAt);
+      const dateStr = dateObj.toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' });
+      const timeStr = dateObj.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+      const methodStr = bill.paymentMethod === 'cash' ? 'Cash' : 'UPI';
+      csv += `${bill.billNumber},${tableNum},"${custName.replace(/"/g, '""')}",${bill.subtotal.toFixed(2)},${bill.tax.toFixed(2)},${bill.totalAmount.toFixed(2)},${methodStr},${dateStr} ${timeStr}\n`;
+    });
+
+    const filename = isSingleDay
+      ? `daily_sales_report_${startDateParam}.csv`
+      : `sales_report_${startDateParam}_to_${endDateParam}.csv`;
+
     res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', `attachment; filename=daily_sales_report_${filenameDate}.csv`);
+    res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
     return res.status(200).send(csv);
   } catch (error: any) {
-    console.error('Daily report generation error:', error);
-    return res.status(500).json({ success: false, message: 'Failed to generate daily sales report.', error: error.message });
+    console.error('Date-range sales report error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to generate sales report.', error: error.message });
   }
 });
 

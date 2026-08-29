@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import api from '../../../lib/axios';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '../../../components/ui/card';
-import { Loader2, TrendingUp, DollarSign, ShoppingBag, Layers, Star, Info, Download } from 'lucide-react';
+import { Loader2, TrendingUp, DollarSign, ShoppingBag, Layers, Star, Info, Download, AlertTriangle } from 'lucide-react';
 import { 
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, 
   PieChart, Pie, Cell, BarChart, Bar, Legend 
@@ -44,26 +44,73 @@ export default function AdminDashboardPage() {
   const [orderStatuses, setOrderStatuses] = useState<OrderStatusPoint[]>([]);
   
   const [mounted, setMounted] = useState(false);
-  const [reportDate, setReportDate] = useState(() => {
-    return new Date().toISOString().split('T')[0];
+  const todayStr = new Date().toISOString().split('T')[0];
+
+  const [startDate, setStartDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 7);
+    return d.toISOString().split('T')[0];
   });
+  const [endDate, setEndDate] = useState(todayStr);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [downloadingReport, setDownloadingReport] = useState(false);
+
+  const isEndBeforeStart = Boolean(startDate && endDate && endDate < startDate);
+  const isFutureDate = Boolean((startDate && startDate > todayStr) || (endDate && endDate > todayStr));
+  const validationError = isEndBeforeStart
+    ? 'End date cannot be earlier than start date.'
+    : isFutureDate
+    ? 'Report dates cannot be in the future.'
+    : null;
 
   const handleDownloadReport = async () => {
+    if (validationError) return;
+    setDownloadingReport(true);
+    setReportError(null);
+
     try {
-      const res = await api.get(`/analytics/daily-report?date=${reportDate}`, {
+      const res = await api.get('/analytics/daily-report', {
+        params: { startDate, endDate },
         responseType: 'blob'
       });
+
+      // Handle server error returned as Blob
+      const contentType = res.headers['content-type'] || '';
+      if (contentType.includes('application/json')) {
+        const text = await res.data.text();
+        const json = JSON.parse(text);
+        setReportError(json.message || 'No sales data found for the selected range.');
+        return;
+      }
+
+      const isSingleDay = startDate === endDate;
+      const filename = isSingleDay
+        ? `daily_sales_report_${startDate}.csv`
+        : `sales_report_${startDate}_to_${endDate}.csv`;
+
       const blob = new Blob([res.data], { type: 'text/csv' });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', `daily_sales_report_${reportDate}.csv`);
+      link.setAttribute('download', filename);
       document.body.appendChild(link);
       link.click();
       link.parentNode?.removeChild(link);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Download report error:', err);
-      alert('Failed to download sales report.');
+      let message = 'No sales data found for the selected date range.';
+      if (err.response?.data instanceof Blob) {
+        try {
+          const text = await err.response.data.text();
+          const parsed = JSON.parse(text);
+          if (parsed.message) message = parsed.message;
+        } catch (_) {}
+      } else if (err.response?.data?.message) {
+        message = err.response.data.message;
+      }
+      setReportError(message);
+    } finally {
+      setDownloadingReport(false);
     }
   };
 
@@ -128,19 +175,56 @@ export default function AdminDashboardPage() {
           <p className="text-xs text-muted-foreground mt-0.5">Real-time cafe sales metrics and visual analytics dashboards.</p>
         </div>
         
-        <div className="flex items-center gap-2.5 self-stretch sm:self-auto">
-          <input
-            type="date"
-            value={reportDate}
-            onChange={(e) => setReportDate(e.target.value)}
-            className="bg-secondary border border-border/80 rounded-xl py-2 px-3 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary text-foreground"
-          />
-          <button
-            onClick={handleDownloadReport}
-            className="flex items-center gap-1.5 px-4 py-2 bg-primary hover:bg-primary/95 text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow-md shadow-primary/10 tracking-wide"
-          >
-            <Download className="w-4 h-4" /> Download Sales Report
-          </button>
+        <div className="flex flex-col items-end gap-1.5 self-stretch sm:self-auto">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1.5 bg-secondary/40 border border-border/80 rounded-xl px-2.5 py-1.5">
+              <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">From:</span>
+              <input
+                type="date"
+                value={startDate}
+                max={todayStr}
+                onChange={(e) => {
+                  setStartDate(e.target.value);
+                  setReportError(null);
+                }}
+                className="bg-transparent text-xs font-semibold focus:outline-none text-foreground cursor-pointer"
+              />
+            </div>
+
+            <div className="flex items-center gap-1.5 bg-secondary/40 border border-border/80 rounded-xl px-2.5 py-1.5">
+              <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">To:</span>
+              <input
+                type="date"
+                value={endDate}
+                max={todayStr}
+                onChange={(e) => {
+                  setEndDate(e.target.value);
+                  setReportError(null);
+                }}
+                className="bg-transparent text-xs font-semibold focus:outline-none text-foreground cursor-pointer"
+              />
+            </div>
+
+            <button
+              onClick={handleDownloadReport}
+              disabled={Boolean(validationError) || downloadingReport}
+              className="flex items-center gap-1.5 px-4 py-2 bg-primary hover:bg-primary/95 disabled:bg-muted disabled:text-muted-foreground text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow-md shadow-primary/10 tracking-wide disabled:cursor-not-allowed"
+            >
+              {downloadingReport ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Download className="w-4 h-4" />
+              )}
+              Download Sales Report
+            </button>
+          </div>
+
+          {(validationError || reportError) && (
+            <span className="text-xs font-semibold text-destructive flex items-center gap-1">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+              {validationError || reportError}
+            </span>
+          )}
         </div>
       </div>
 
