@@ -18,6 +18,22 @@ import {
 import { Table, Order, OrderItem, WaiterRequest, Bill } from '../../../types';
 import { formatCurrency } from '../../../lib/formatters';
 
+/**
+ * Natural numerical comparison helper for table identifiers (e.g. "1" < "2" < "9" < "10" < "11" < "20")
+ * Handles pure numeric strings as well as prefixed identifiers ("Table 1", "T-2", etc.)
+ */
+export const compareTableNumbers = (aStr: string, bStr: string): number => {
+  const matchA = aStr.match(/\d+/);
+  const matchB = bStr.match(/\d+/);
+  const numA = matchA ? parseInt(matchA[0], 10) : NaN;
+  const numB = matchB ? parseInt(matchB[0], 10) : NaN;
+
+  if (!isNaN(numA) && !isNaN(numB) && numA !== numB) {
+    return numA - numB;
+  }
+  return aStr.localeCompare(bStr, undefined, { numeric: true, sensitivity: 'base' });
+};
+
 export default function AdminTablesPage() {
   const { user, restaurant } = useAuthStore();
   const restaurantId = user?.restaurantId;
@@ -428,7 +444,7 @@ export default function AdminTablesPage() {
   const activeCount = tableDataList.filter((td) => td.info.status === 'ACTIVE').length;
   const availableCount = tableDataList.filter((td) => td.info.status === 'AVAILABLE').length;
 
-  // Sort: BILL_REQUESTED first, then SERVED, then ACTIVE, then AVAILABLE
+  // Sort: Status priority first (BILL_REQUESTED -> SERVED -> ACTIVE -> AVAILABLE), then natural numerical table order
   const sortedTableDataList = [...tableDataList].sort((a, b) => {
     const priority: Record<'BILL_REQUESTED' | 'SERVED' | 'ACTIVE' | 'AVAILABLE', number> = {
       BILL_REQUESTED: 0,
@@ -436,7 +452,11 @@ export default function AdminTablesPage() {
       ACTIVE: 2,
       AVAILABLE: 3,
     };
-    return priority[a.info.status] - priority[b.info.status];
+    const prioDiff = priority[a.info.status] - priority[b.info.status];
+    if (prioDiff !== 0) {
+      return prioDiff;
+    }
+    return compareTableNumbers(a.table.tableNumber, b.table.tableNumber);
   });
 
   const selectedTableInfo = selectedTableNum ? getTableInfo(selectedTableNum) : null;
@@ -720,7 +740,7 @@ export default function AdminTablesPage() {
               </div>
             ) : (
               <div className="grid sm:grid-cols-2 gap-4 p-5">
-                {tables.map((table) => (
+                {[...tables].sort((a, b) => compareTableNumbers(a.tableNumber, b.tableNumber)).map((table) => (
                   <div key={table._id} className="bg-secondary/20 border border-border/50 rounded-2xl p-4 flex flex-col items-center justify-between gap-4 shadow-sm group">
                     <div className="relative w-44 h-44 bg-white border border-border/30 rounded-xl overflow-hidden flex items-center justify-center p-2.5">
                       {table.qrCodeUrl ? (
