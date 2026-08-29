@@ -26,86 +26,89 @@ router.get('/overview', protect, restrictTo('restaurant_admin'), async (req: Aut
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    // 1. Core counters
-    const totalOrders = await Order.countDocuments({ restaurantId });
-    const todayOrders = await Order.countDocuments({ restaurantId, createdAt: { $gte: startOfToday } });
-    const activeTablesCount = await Table.countDocuments({ restaurantId });
-
-    // 2. Revenue (Completed orders)
-    const totalRevenueAggregation = await Order.aggregate([
-      { $match: { restaurantId, status: 'completed' } },
-      { $group: { _id: null, total: { $sum: '$totalAmount' } } },
+    // Execute all core metrics and aggregation queries in parallel
+    const [
+      totalOrders,
+      todayOrders,
+      activeTablesCount,
+      totalRevenueAggregation,
+      todayRevenueAggregation,
+      salesTrend,
+      popularDishes,
+      orderStatuses,
+    ] = await Promise.all([
+      Order.countDocuments({ restaurantId }),
+      Order.countDocuments({ restaurantId, createdAt: { $gte: startOfToday } }),
+      Table.countDocuments({ restaurantId }),
+      Order.aggregate([
+        { $match: { restaurantId, status: 'completed' } },
+        { $group: { _id: null, total: { $sum: '$totalAmount' } } },
+      ]),
+      Order.aggregate([
+        { $match: { restaurantId, status: 'completed', createdAt: { $gte: startOfToday } } },
+        { $group: { _id: null, total: { $sum: '$totalAmount' } } },
+      ]),
+      Order.aggregate([
+        {
+          $match: {
+            restaurantId,
+            status: 'completed',
+            createdAt: { $gte: thirtyDaysAgo },
+          },
+        },
+        {
+          $group: {
+            _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+            revenue: { $sum: '$totalAmount' },
+            count: { $sum: 1 },
+          },
+        },
+        { $sort: { _id: 1 } },
+        {
+          $project: {
+            date: '$_id',
+            revenue: 1,
+            count: 1,
+            _id: 0,
+          },
+        },
+      ]),
+      Order.aggregate([
+        { $match: { restaurantId, status: 'completed' } },
+        { $unwind: '$items' },
+        {
+          $group: {
+            _id: '$items.name',
+            quantity: { $sum: '$items.quantity' },
+            revenue: { $sum: { $multiply: ['$items.price', '$items.quantity'] } },
+          },
+        },
+        { $sort: { quantity: -1 } },
+        { $limit: 5 },
+        {
+          $project: {
+            name: '$_id',
+            quantity: 1,
+            revenue: 1,
+            _id: 0,
+          },
+        },
+      ]),
+      Order.aggregate([
+        { $match: { restaurantId } },
+        { $group: { _id: '$status', count: { $sum: 1 } } },
+        {
+          $project: {
+            name: '$_id',
+            value: '$count',
+            _id: 0,
+          },
+        },
+      ]),
     ]);
+
     const totalRevenue = totalRevenueAggregation[0]?.total || 0;
-
-    const todayRevenueAggregation = await Order.aggregate([
-      { $match: { restaurantId, status: 'completed', createdAt: { $gte: startOfToday } } },
-      { $group: { _id: null, total: { $sum: '$totalAmount' } } },
-    ]);
     const todayRevenue = todayRevenueAggregation[0]?.total || 0;
-
-    // 3. Sales trends (Last 30 Days)
-    const salesTrend = await Order.aggregate([
-      {
-        $match: {
-          restaurantId,
-          status: 'completed',
-          createdAt: { $gte: thirtyDaysAgo },
-        },
-      },
-      {
-        $group: {
-          _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
-          revenue: { $sum: '$totalAmount' },
-          count: { $sum: 1 },
-        },
-      },
-      { $sort: { _id: 1 } },
-      {
-        $project: {
-          date: '$_id',
-          revenue: 1,
-          count: 1,
-          _id: 0,
-        },
-      },
-    ]);
-
-    // 4. Popular Dishes (Aggregating order items)
-    const popularDishes = await Order.aggregate([
-      { $match: { restaurantId, status: 'completed' } },
-      { $unwind: '$items' },
-      {
-        $group: {
-          _id: '$items.name',
-          quantity: { $sum: '$items.quantity' },
-          revenue: { $sum: { $multiply: ['$items.price', '$items.quantity'] } },
-        },
-      },
-      { $sort: { quantity: -1 } },
-      { $limit: 5 },
-      {
-        $project: {
-          name: '$_id',
-          quantity: 1,
-          revenue: 1,
-          _id: 0,
-        },
-      },
-    ]);
-
-    // 5. Orders by status (Pie chart data)
-    const orderStatuses = await Order.aggregate([
-      { $match: { restaurantId } },
-      { $group: { _id: '$status', count: { $sum: 1 } } },
-      {
-        $project: {
-          name: '$_id',
-          value: '$count',
-          _id: 0,
-        },
-      },
-    ]);
 
     return res.json({
       success: true,

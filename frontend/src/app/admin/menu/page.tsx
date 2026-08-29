@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import api from '../../../lib/axios';
 import { Button } from '../../../components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '../../../components/ui/card';
@@ -63,11 +63,12 @@ export default function AdminMenuPage() {
   const [tempOptionPrice, setTempOptionPrice] = useState('');
   const [tempOptionsList, setTempOptionsList] = useState<CustomizationOption[]>([]);
 
-  const defaultCategories = ['Coffee', 'Tea', 'Mocktails', 'Snacks', 'Breakfast', 'Lunch', 'Dinner', 'Desserts'];
-  const activeCategories = Array.from(new Set(dishes.map((d) => d.category))).filter(Boolean);
-  const categoriesList = Array.from(new Set([...defaultCategories, ...activeCategories]));
-  // Reusable filtering mechanism: A category is displayed in active UI only if it contains at least one menu item
-  const visibleCategories = categoriesList.filter((cat) => dishes.some((d) => d.category === cat));
+  const visibleCategories = useMemo(() => {
+    const defaultCategories = ['Coffee', 'Tea', 'Mocktails', 'Snacks', 'Breakfast', 'Lunch', 'Dinner', 'Desserts'];
+    const activeCategories = Array.from(new Set(dishes.map((d) => d.category))).filter(Boolean);
+    const categoriesList = Array.from(new Set([...defaultCategories, ...activeCategories]));
+    return categoriesList.filter((cat) => dishes.some((d) => d.category === cat));
+  }, [dishes]);
 
   // Automatically reset category filter to 'All' if selected category becomes empty (e.g. last item deleted/moved)
   useEffect(() => {
@@ -219,12 +220,14 @@ export default function AdminMenuPage() {
     }
   };
 
-  const filteredDishes = dishes.filter((dish) => {
-    const matchesSearch = dish.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          dish.description?.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCat = categoryFilter === 'All' || dish.category === categoryFilter;
-    return matchesSearch && matchesCat;
-  });
+  const filteredDishes = useMemo(() => {
+    return dishes.filter((dish) => {
+      const matchesSearch = dish.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                            dish.description?.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesCat = categoryFilter === 'All' || dish.category === categoryFilter;
+      return matchesSearch && matchesCat;
+    });
+  }, [dishes, searchQuery, categoryFilter]);
 
   return (
     <div className="space-y-6">

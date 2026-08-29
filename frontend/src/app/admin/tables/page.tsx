@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import api from '../../../lib/axios';
 import useSocket from '../../../hooks/useSocket';
 import { useAuthStore } from '../../../store/authStore';
@@ -445,19 +445,21 @@ export default function AdminTablesPage() {
   const availableCount = tableDataList.filter((td) => td.info.status === 'AVAILABLE').length;
 
   // Sort: Status priority first (BILL_REQUESTED -> SERVED -> ACTIVE -> AVAILABLE), then natural numerical table order
-  const sortedTableDataList = [...tableDataList].sort((a, b) => {
-    const priority: Record<'BILL_REQUESTED' | 'SERVED' | 'ACTIVE' | 'AVAILABLE', number> = {
-      BILL_REQUESTED: 0,
-      SERVED: 1,
-      ACTIVE: 2,
-      AVAILABLE: 3,
-    };
-    const prioDiff = priority[a.info.status] - priority[b.info.status];
-    if (prioDiff !== 0) {
-      return prioDiff;
-    }
-    return compareTableNumbers(a.table.tableNumber, b.table.tableNumber);
-  });
+  const sortedTableDataList = useMemo(() => {
+    return [...tableDataList].sort((a, b) => {
+      const priority: Record<'BILL_REQUESTED' | 'SERVED' | 'ACTIVE' | 'AVAILABLE', number> = {
+        BILL_REQUESTED: 0,
+        SERVED: 1,
+        ACTIVE: 2,
+        AVAILABLE: 3,
+      };
+      const prioDiff = priority[a.info.status] - priority[b.info.status];
+      if (prioDiff !== 0) {
+        return prioDiff;
+      }
+      return compareTableNumbers(a.table.tableNumber, b.table.tableNumber);
+    });
+  }, [tables, activeOrders, waiterRequests, recentBills]);
 
   const selectedTableInfo = selectedTableNum ? getTableInfo(selectedTableNum) : null;
 

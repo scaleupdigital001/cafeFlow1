@@ -71,6 +71,7 @@ const OrderSchema: Schema = new Schema(
 
 // Compound indexes matching high-frequency query patterns
 OrderSchema.index({ restaurantId: 1, createdAt: -1 });
+OrderSchema.index({ restaurantId: 1, status: 1, createdAt: -1 });
 OrderSchema.index({ restaurantId: 1, tableNumber: 1, status: 1 });
 
 export default mongoose.model<IOrder>('Order', OrderSchema);

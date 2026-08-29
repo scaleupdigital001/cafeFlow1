@@ -39,4 +39,7 @@ const BillSchema: Schema = new Schema(
   { timestamps: true }
 );
 
+// Compound index matching sales report queries
+BillSchema.index({ restaurantId: 1, paymentStatus: 1, updatedAt: -1 });
+
 export default mongoose.model<IBill>('Bill', BillSchema);
