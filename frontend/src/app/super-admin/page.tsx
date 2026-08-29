@@ -10,7 +10,8 @@ import { Badge } from '../../components/ui/badge';
 import ThemeToggle from '../../components/ThemeToggle';
 import { 
   Loader2, LogOut, Coffee, ShieldCheck, Layers, 
-  CheckCircle2, XCircle, ArrowUpRight, Globe, AlertTriangle, ExternalLink
+  CheckCircle2, XCircle, ArrowUpRight, Globe, AlertTriangle, ExternalLink,
+  Download, Trash2, Upload
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -33,6 +34,15 @@ export default function SuperAdminPage() {
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Data Ops States
+  const [selectedTenant, setSelectedTenant] = useState<string>('all');
+  const [cleanMonths, setCleanMonths] = useState<string>('');
+  const [backupToken, setBackupToken] = useState<string | null>(null);
+  const [backupLoading, setBackupLoading] = useState(false);
+  const [cleanLoading, setCleanLoading] = useState(false);
+  const [restoreLoading, setRestoreLoading] = useState(false);
+  const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Authenticate role guard
   useEffect(() => {
@@ -79,6 +89,134 @@ export default function SuperAdminPage() {
   const handleLogout = () => {
     clearAuth();
     router.push('/login');
+  };
+
+  // 1. BACKUP HANDLER
+  const handleBackup = async () => {
+    setBackupLoading(true);
+    setStatusMessage(null);
+    try {
+      const res = await api.post(
+        '/data-ops/backup',
+        { restaurantId: selectedTenant, months: cleanMonths ? Number(cleanMonths) : undefined },
+        { responseType: 'blob' }
+      );
+
+      // Read backup token from response header
+      const tokenHeader = res.headers['x-backup-token'] || res.headers['X-Backup-Token'];
+      if (tokenHeader) {
+        setBackupToken(tokenHeader);
+      }
+
+      const dateStr = new Date().toISOString().split('T')[0];
+      const filename = `cafeflow_backup_${selectedTenant}_${dateStr}.zip`;
+
+      const blob = new Blob([res.data], { type: 'application/zip' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      link.parentNode?.removeChild(link);
+
+      setStatusMessage({
+        type: 'success',
+        text: 'Backup downloaded successfully! Verification token acquired for clean operation.',
+      });
+    } catch (err: any) {
+      console.error('Backup error:', err);
+      setStatusMessage({ type: 'error', text: 'Failed to generate backup.' });
+    } finally {
+      setBackupLoading(false);
+    }
+  };
+
+  // 2. CLEAN HANDLER
+  const handleClean = async () => {
+    if (!cleanMonths || Number(cleanMonths) <= 0) {
+      setStatusMessage({ type: 'error', text: 'Please enter a valid positive number of months.' });
+      return;
+    }
+
+    if (!backupToken) {
+      setStatusMessage({
+        type: 'error',
+        text: 'Clean blocked: A verified backup must be downloaded first before purging database records.',
+      });
+      return;
+    }
+
+    const expectedText = selectedTenant === 'all' ? 'CONFIRM PURGE ALL' : 'CONFIRM PURGE';
+    const confirmInput = window.prompt(
+      `WARNING: This will permanently delete Orders, Bills, and Waiter Requests older than ${cleanMonths} months.\n\nType "${expectedText}" to confirm:`
+    );
+
+    if (confirmInput !== expectedText) {
+      setStatusMessage({ type: 'error', text: 'Purge cancelled. Confirmation text did not match.' });
+      return;
+    }
+
+    setCleanLoading(true);
+    setStatusMessage(null);
+    try {
+      const res = await api.post('/data-ops/clean', {
+        restaurantId: selectedTenant,
+        months: Number(cleanMonths),
+        backupToken,
+        confirmText: expectedText,
+      });
+
+      if (res.data.success) {
+        setStatusMessage({
+          type: 'success',
+          text: `${res.data.message} (Orders: ${res.data.purged.orders}, Bills: ${res.data.purged.bills}, Requests: ${res.data.purged.waiterRequests})`,
+        });
+        setBackupToken(null);
+      }
+    } catch (err: any) {
+      console.error('Clean error:', err);
+      const msg = err.response?.data?.message || 'Failed to purge data.';
+      setStatusMessage({ type: 'error', text: msg });
+    } finally {
+      setCleanLoading(false);
+    }
+  };
+
+  // 3. RESTORE HANDLER
+  const handleRestore = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.name.endsWith('.zip')) {
+      setStatusMessage({ type: 'error', text: 'Please upload a valid .zip backup file.' });
+      return;
+    }
+
+    setRestoreLoading(true);
+    setStatusMessage(null);
+    try {
+      const formData = new FormData();
+      formData.append('backupZip', file);
+
+      const res = await api.post('/data-ops/restore', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+
+      if (res.data.success) {
+        setStatusMessage({
+          type: 'success',
+          text: `${res.data.message} (Orders: ${res.data.restored.orders}, Bills: ${res.data.restored.bills}, Requests: ${res.data.restored.waiterRequests})`,
+        });
+      }
+    } catch (err: any) {
+      console.error('Restore error:', err);
+      const msg = err.response?.data?.message || 'Failed to restore backup.';
+      setStatusMessage({ type: 'error', text: msg });
+    } finally {
+      setRestoreLoading(false);
+      e.target.value = '';
+    }
   };
 
   if (loading) {
@@ -211,6 +349,122 @@ export default function SuperAdminPage() {
               </table>
             </div>
           )}
+        </Card>
+
+        {/* Data Archiving & System Maintenance Panel */}
+        <Card className="border border-border/80 shadow-md">
+          <CardHeader className="border-b border-border/40 pb-4">
+            <CardTitle className="text-lg font-serif font-bold flex items-center gap-2">
+              <Layers className="w-5 h-5 text-primary" /> Data Archiving & System Maintenance
+            </CardTitle>
+            <CardDescription className="text-xs">
+              Perform rolling backups, purge obsolete transactional records (Orders, Bills, Waiter Requests), and restore backups safely. Core configurations (Tables, Dishes, Restaurants, Users) are permanently protected.
+            </CardDescription>
+          </CardHeader>
+
+          <CardContent className="p-6 space-y-6">
+            {/* Status Notification */}
+            {statusMessage && (
+              <div
+                className={`p-3.5 rounded-xl text-xs font-semibold flex items-center gap-2 ${
+                  statusMessage.type === 'success'
+                    ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400'
+                    : 'bg-destructive/10 border border-destructive/20 text-destructive'
+                }`}
+              >
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>{statusMessage.text}</span>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {/* 1. BACKUP CONTROL */}
+              <div className="bg-secondary/20 border border-border/60 rounded-xl p-4 space-y-3">
+                <div className="font-bold text-sm flex items-center gap-1.5 text-foreground">
+                  <Download className="w-4 h-4 text-primary" /> 1. Export Backup (ZIP)
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Exports Orders, Bills, and Waiter Requests as human-readable CSV files inside a ZIP archive.
+                </p>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Select Tenant:</label>
+                  <select
+                    value={selectedTenant}
+                    onChange={(e) => setSelectedTenant(e.target.value)}
+                    className="w-full text-xs font-semibold bg-background border border-border rounded-lg p-2 text-foreground focus:outline-none"
+                  >
+                    <option value="all">All Restaurants (Platform-wide)</option>
+                    {restaurants.map((r) => (
+                      <option key={r._id} value={r._id}>{r.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <Button
+                  onClick={handleBackup}
+                  disabled={backupLoading}
+                  className="w-full text-xs font-bold gap-1.5 h-9 cursor-pointer"
+                >
+                  {backupLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                  Download Backup ZIP
+                </Button>
+              </div>
+
+              {/* 2. CLEAN / PURGE CONTROL */}
+              <div className="bg-secondary/20 border border-border/60 rounded-xl p-4 space-y-3">
+                <div className="font-bold text-sm flex items-center gap-1.5 text-foreground">
+                  <Trash2 className="w-4 h-4 text-destructive" /> 2. Purge Old Data
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Safely purges transactional records older than N months. Requires a verified backup token first.
+                </p>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Cutoff (Months):</label>
+                  <input
+                    type="number"
+                    min="1"
+                    placeholder="e.g. 6"
+                    value={cleanMonths}
+                    onChange={(e) => setCleanMonths(e.target.value)}
+                    className="w-full text-xs font-semibold bg-background border border-border rounded-lg p-2 text-foreground focus:outline-none"
+                  />
+                </div>
+                <Button
+                  onClick={handleClean}
+                  disabled={cleanLoading || !cleanMonths}
+                  variant="destructive"
+                  className="w-full text-xs font-bold gap-1.5 h-9 cursor-pointer"
+                >
+                  {cleanLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                  Purge Data Older Than {cleanMonths || 'N'} Months
+                </Button>
+              </div>
+
+              {/* 3. RESTORE CONTROL */}
+              <div className="bg-secondary/20 border border-border/60 rounded-xl p-4 space-y-3">
+                <div className="font-bold text-sm flex items-center gap-1.5 text-foreground">
+                  <Upload className="w-4 h-4 text-emerald-600 dark:text-emerald-400" /> 3. Restore from Backup
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Idempotently restores records from a previously exported ZIP backup. Idempotent & skips duplicates.
+                </p>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Upload Backup ZIP:</label>
+                  <input
+                    type="file"
+                    accept=".zip"
+                    onChange={handleRestore}
+                    disabled={restoreLoading}
+                    className="w-full text-xs font-semibold bg-background border border-border rounded-lg p-1.5 text-foreground cursor-pointer"
+                  />
+                </div>
+                {restoreLoading && (
+                  <div className="flex items-center gap-1.5 text-xs text-primary font-semibold">
+                    <Loader2 className="w-4 h-4 animate-spin" /> Restoring records...
+                  </div>
+                )}
+              </div>
+            </div>
+          </CardContent>
         </Card>
       </main>
     </div>

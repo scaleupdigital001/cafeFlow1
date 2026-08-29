@@ -23,6 +23,7 @@ import orderRoutes from './routes/order';
 import billRoutes from './routes/bill';
 import analyticsRoutes from './routes/analytics';
 import staffRoutes from './routes/staff';
+import dataOpsRoutes from './routes/dataOps';
 
 const app = express();
 app.set('trust proxy', 1); // Trust first proxy (Render, Vercel, Nginx, etc.)
@@ -156,6 +157,7 @@ app.use('/api/orders', orderRoutes);
 app.use('/api/bills', billRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/staff', staffRoutes);
+app.use('/api/data-ops', dataOpsRoutes);
 
 // Free Tier Optimization 3: Detailed Keep-Alive & Health Check Endpoints
 app.get(['/health', '/api/health'], (req, res) => {
