@@ -47,49 +47,19 @@ const getDistanceInMeters = (lat1: number, lon1: number, lat2: number, lon2: num
  */
 router.post('/', async (req, res) => {
   try {
-    const { restaurantId, customerName, phoneNumber, tableNumber, items, latitude, longitude } = req.body;
+    const { restaurantId, customerName, phoneNumber, tableNumber, items } = req.body;
 
-    if (!restaurantId || !customerName || !phoneNumber || !tableNumber || !items || !items.length) {
-      return res.status(400).json({ success: false, message: 'All order details are required.' });
+    if (!restaurantId || !tableNumber || !items || !items.length) {
+      return res.status(400).json({ success: false, message: 'Table number and order items are required.' });
     }
 
-    const cleanedPhone = phoneNumber.replace(/\D/g, '');
-    if (cleanedPhone.length !== 10) {
-      return res.status(400).json({ success: false, message: 'Mobile number must be exactly 10 digits.' });
-    }
+    const guestName = customerName && customerName.trim() ? customerName.trim() : `Table ${tableNumber} Guest`;
+    const cleanedPhone = phoneNumber ? phoneNumber.replace(/\D/g, '') : '';
 
     // 1. Fetch Restaurant configurations
     const restaurant = await Restaurant.findById(restaurantId);
     if (!restaurant) {
       return res.status(404).json({ success: false, message: 'Restaurant not found.' });
-    }
-
-    // 2. Validate Geolocation distance if restaurant location is configured
-    if (restaurant.location && restaurant.location.latitude && restaurant.location.longitude) {
-      if (latitude === undefined || longitude === undefined) {
-        return res.status(400).json({
-          success: false,
-          message: 'Location verification is required to place an order at this cafe. Please enable your GPS.',
-        });
-      }
-
-      const distance = getDistanceInMeters(
-        restaurant.location.latitude,
-        restaurant.location.longitude,
-        Number(latitude),
-        Number(longitude)
-      );
-
-      // Maximum allowed distance: 100 meters
-      const MAX_DISTANCE_METERS = 100;
-      if (distance > MAX_DISTANCE_METERS) {
-        console.log(`[Geofence Block] User is ${Math.round(distance)}m away from ${restaurant.name} (Max: ${MAX_DISTANCE_METERS}m)`);
-        return res.status(400).json({
-          success: false,
-          message: `You must be physically present at the restaurant to place an order. (Detected: ${Math.round(distance)} meters away)`,
-        });
-      }
-      console.log(`[Geofence Pass] User is ${Math.round(distance)}m away from ${restaurant.name} (Allowed)`);
     }
 
     // 3. Compute costs securely from Database pricing to avoid client-side tampering
@@ -150,7 +120,7 @@ router.post('/', async (req, res) => {
     // 4. Save order to database
     const order = new Order({
       restaurantId,
-      customerName,
+      customerName: guestName,
       phoneNumber: cleanedPhone,
       tableNumber,
       items: validatedItems,
@@ -160,9 +130,6 @@ router.post('/', async (req, res) => {
       totalAmount,
     });
     await order.save();
-
-    // 5. Consume/delete OTP token to prevent reuse
-    await Otp.deleteOne({ phoneNumber: cleanedPhone });
 
     // 6. Broadcast via Socket.io
     const io = req.app.get('io');

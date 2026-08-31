@@ -452,37 +452,20 @@ export default function CustomerMenuPage() {
   };
 
   // Place order directly with optional geofencing check
-  const handlePlaceOrder = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Place order directly with 1 tap (no friction, no verification popup)
+  const handlePlaceOrder = async () => {
     setCheckoutError(null);
     setOtpLoading(true);
 
-    if (!customerName || !phoneNumber) {
-      setCheckoutError('Please enter your name and phone number.');
-      setOtpLoading(false);
-      return;
-    }
+    try {
+      if (!effectiveTableNumber) {
+        alert('Table number missing. Please scan your table QR code to place an order.');
+        setOtpLoading(false);
+        return;
+      }
 
-    const cleanedPhone = phoneNumber.replace(/\D/g, '');
-    if (cleanedPhone.length !== 10) {
-      setCheckoutError('Mobile number must be exactly 10 digits.');
-      setOtpLoading(false);
-      return;
-    }
-
-    const placeOrderWithCoords = async (latitude?: number, longitude?: number) => {
-      try {
-        if (!effectiveTableNumber) {
-          setCheckoutError('Table number missing. Please scan your table QR code to place an order.');
-          setOtpLoading(false);
-          return;
-        }
-
+      if (isAppendable && activeOrderId) {
         const orderData = {
-          restaurantId: restaurant._id,
-          customerName,
-          phoneNumber: cleanedPhone,
-          tableNumber: effectiveTableNumber,
           items: cartItems.map((item) => ({
             dishId: item.dishId,
             name: item.name,
@@ -491,64 +474,29 @@ export default function CustomerMenuPage() {
             customizations: item.customizations,
             specialInstructions: item.specialInstructions,
           })),
-          latitude,
-          longitude,
         };
 
-        const orderResponse = await api.post('/orders', orderData);
-        const newOrder = orderResponse.data.data;
+        const res = await api.post(`/orders/${activeOrderId}/append`, orderData);
+        const updatedOrder = res.data.data;
 
-        // Reset state
         clearCart();
-        setIsCheckoutOpen(false);
         setIsCartOpen(false);
 
-        // Store active order ID in localStorage for tracking persistence
-        localStorage.setItem(`active_order_${slug}`, newOrder._id);
-        localStorage.setItem('customer_name', customerName);
-        localStorage.setItem('customer_phone', cleanedPhone);
-        setActiveOrderId(newOrder._id);
-        setActiveOrderStatus(newOrder.status);
-        setOrder(newOrder);
-        setBill(null);
-
-        // Switch to tracker tab
+        setActiveOrderId(updatedOrder._id);
+        setActiveOrderStatus(updatedOrder.status);
+        setOrder(updatedOrder);
         setActiveTab('orders');
-      } catch (err: any) {
-        console.error('[Order Placement Failed]:', err.response?.data || err.message);
-        setCheckoutError(err.response?.data?.message || 'Failed to place order. Please try again.');
-      } finally {
-        setOtpLoading(false);
+        return;
       }
-    };
 
-    // Attempt to request geolocation
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          placeOrderWithCoords(position.coords.latitude, position.coords.longitude);
-        },
-        (error) => {
-          console.warn('[Geolocation Error]: Failed to get location:', error.message);
-          // Proceed to place order; the backend handles checking if geofencing is mandatory
-          placeOrderWithCoords();
-        },
-        { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
-      );
-    } else {
-      console.warn('[Geolocation API]: Not supported in browser.');
-      placeOrderWithCoords();
-    }
-  };
+      const guestName = customerName?.trim() || `Table ${effectiveTableNumber} Guest`;
+      const cleanedPhone = phoneNumber ? phoneNumber.replace(/\D/g, '') : '';
 
-  const handleAppendToOrder = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!activeOrderId) return;
-    setCheckoutError(null);
-    setOtpLoading(true);
-
-    try {
       const orderData = {
+        restaurantId: restaurant._id,
+        customerName: guestName,
+        phoneNumber: cleanedPhone,
+        tableNumber: effectiveTableNumber,
         items: cartItems.map((item) => ({
           dishId: item.dishId,
           name: item.name,
@@ -559,22 +507,21 @@ export default function CustomerMenuPage() {
         })),
       };
 
-      const res = await api.post(`/orders/${activeOrderId}/append`, orderData);
-      const updatedOrder = res.data.data;
+      const orderResponse = await api.post('/orders', orderData);
+      const newOrder = orderResponse.data.data;
 
-      // Reset cart and modals
       clearCart();
-      setIsCheckoutOpen(false);
       setIsCartOpen(false);
 
-      // Set order state and switch to tracker tab
-      setActiveOrderId(updatedOrder._id);
-      setActiveOrderStatus(updatedOrder.status);
-      setOrder(updatedOrder);
+      localStorage.setItem(`active_order_${slug}`, newOrder._id);
+      setActiveOrderId(newOrder._id);
+      setActiveOrderStatus(newOrder.status);
+      setOrder(newOrder);
+      setBill(null);
       setActiveTab('orders');
     } catch (err: any) {
-      console.error('[Append Order Failed]:', err.response?.data || err.message);
-      setCheckoutError(err.response?.data?.message || 'Failed to add items to order. Please try again.');
+      console.error('[Order Placement Failed]:', err.response?.data || err.message);
+      alert(err.response?.data?.message || 'Failed to place order. Please try again.');
     } finally {
       setOtpLoading(false);
     }
@@ -1576,128 +1523,29 @@ export default function CustomerMenuPage() {
                     </div>
                   </div>
 
-                  <Button onClick={() => setIsCheckoutOpen(true)} className="w-full cursor-pointer font-bold">
-                    Checkout Dine-In Order <ChevronRight className="w-4.5 h-4.5" />
+                  <Button 
+                    onClick={handlePlaceOrder} 
+                    disabled={otpLoading}
+                    className="w-full cursor-pointer font-bold text-sm py-3.5 bg-primary hover:bg-primary/90 text-white flex items-center justify-between px-4 rounded-xl shadow-lg shadow-primary/20"
+                  >
+                    {otpLoading ? (
+                      <span className="flex items-center gap-2 mx-auto">
+                        <Loader2 className="w-4 h-4 animate-spin" /> Placing Order to Kitchen...
+                      </span>
+                    ) : (
+                      <>
+                        <span className="flex items-center gap-1.5 font-serif font-black">
+                          {isAppendable ? <Plus className="w-4 h-4" /> : <ShoppingBag className="w-4 h-4" />}
+                          {isAppendable ? 'Add Items to Bill' : 'Place Dine-In Order'}
+                        </span>
+                        <span className="flex items-center gap-1 font-bold">
+                          Rs. {total.toFixed(2)} <ChevronRight className="w-4 h-4" />
+                        </span>
+                      </>
+                    )}
                   </Button>
                 </div>
               </>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Verification & Checkout Overlay Modal */}
-      {isCheckoutOpen && (
-        <div className="fixed inset-0 z-50 bg-stone-950/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-card text-card-foreground w-full max-w-md rounded-2xl border border-border overflow-hidden shadow-2xl p-6 space-y-5 animate-fade-in">
-            <div className="flex items-center justify-between border-b border-border/50 pb-3">
-              <h3 className="font-serif font-bold text-base md:text-lg flex items-center gap-1.5">
-                              {isAppendable ? (
-                  <>
-                    <Plus className="w-5 h-5 text-primary animate-pulse" /> Add to Active Order
-                  </>
-                ) : (
-                  <>
-                    <ShieldCheck className="w-5 h-5 text-primary animate-pulse" /> Customer Verification
-                  </>
-                )}
-              </h3>
-             <button
-               onClick={() => {
-                  setCheckoutError(null);
-                  setIsCheckoutOpen(false);
-                }}
-                className="p-1 rounded-full bg-secondary text-muted-foreground hover:text-foreground cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {checkoutError && (
-              <div className="bg-destructive/10 border border-destructive/20 text-destructive text-xs px-3.5 py-2.5 rounded-lg">
-                {checkoutError}
-              </div>
-            )}
-
-            {isAppendable ? (
-              /* Append Order Confirmation Mode */
-              <form onSubmit={handleAppendToOrder} className="space-y-5 text-sm">
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  You already have an active order in progress at Table {effectiveTableNumber || 'Not Detected'}. These additional items will be added directly to your existing bill without re-verifying your details.
-                </p>
-
-                <div className="bg-amber-500/10 border border-amber-500/20 text-amber-800 dark:text-amber-400 p-3.5 rounded-xl text-xs flex gap-2">
-                  <div className="font-bold shrink-0">Note:</div>
-                  <div>Your items will be merged into a single combined bill when you check out and settle.</div>
-                </div>
-
-                <Button type="submit" disabled={otpLoading} className="w-full cursor-pointer font-bold gap-2 bg-amber-600 hover:bg-amber-700 text-white">
-                  {otpLoading ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" /> Adding to Bill...
-                    </>
-                  ) : (
-                    <>Add to Table Bill (Rs. {total.toFixed(2)})</>
-                  )}
-                </Button>
-              </form>
-            ) : (
-              /* Regular Verification Mode */
-              <form onSubmit={handlePlaceOrder} className="space-y-4 text-sm">
-                <p className="text-xs text-muted-foreground">
-                  Please enter your details below to place your dine-in order. We will verify your location to ensure you are at the table.
-                </p>
-
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-muted-foreground mb-1 uppercase tracking-wide">
-                      Your Full Name
-                    </label>
-                    <div className="relative">
-                      <User className="absolute left-3 top-3 w-4 h-4 text-muted-foreground" />
-                      <input
-                        type="text"
-                        required
-                        value={customerName}
-                        onChange={(e) => setCustomerName(e.target.value)}
-                        placeholder="John Doe"
-                        className="w-full text-xs bg-secondary/50 text-foreground border border-border rounded-xl pl-9 pr-4 py-2.5 outline-none focus:ring-2 focus:ring-primary focus:bg-background transition-all"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-muted-foreground mb-1 uppercase tracking-wide">
-                      Mobile Number
-                    </label>
-                    <div className="relative">
-                      <Phone className="absolute left-3 top-3 w-4 h-4 text-muted-foreground" />
-                      <input
-                        type="tel"
-                        required
-                        value={phoneNumber}
-                        onChange={(e) => {
-                          const val = e.target.value.replace(/\D/g, '');
-                          setPhoneNumber(val);
-                        }}
-                        maxLength={10}
-                        placeholder="e.g. 9876543210"
-                        className="w-full text-xs bg-secondary/50 text-foreground border border-border rounded-xl pl-9 pr-4 py-2.5 outline-none focus:ring-2 focus:ring-primary focus:bg-background transition-all"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <Button type="submit" disabled={otpLoading} className="w-full mt-2 cursor-pointer font-bold gap-2">
-                  {otpLoading ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" /> Verifying & Placing Order...
-                    </>
-                  ) : (
-                    'Place Dine-in Order'
-                  )}
-                </Button>
-              </form>
             )}
           </div>
         </div>

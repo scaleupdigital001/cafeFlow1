@@ -51,8 +51,8 @@ const OrderSchema: Schema = new Schema(
       required: true,
       index: true,
     },
-    customerName: { type: String, required: true },
-    phoneNumber: { type: String, required: true },
+    customerName: { type: String, default: 'Guest' },
+    phoneNumber: { type: String, default: '' },
     tableNumber: { type: String, required: true },
     items: [OrderItemSchema],
     status: {
