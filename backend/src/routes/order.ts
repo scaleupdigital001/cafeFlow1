@@ -142,8 +142,8 @@ router.post('/', async (req, res) => {
       });
     }
 
-    // Calculate tax using restaurant tax rate
-    const taxRate = restaurant.taxRate || 5;
+    // Calculate tax using restaurant tax rate (respect 0% tax)
+    const taxRate = restaurant.taxRate !== undefined && restaurant.taxRate !== null ? Number(restaurant.taxRate) : 5;
     const tax = Number(((subtotal * taxRate) / 100).toFixed(2));
     const totalAmount = Number((subtotal + tax).toFixed(2));
 
@@ -265,7 +265,7 @@ router.post('/manual', protect, restrictTo('restaurant_admin', 'staff', 'super_a
       });
     }
 
-    const taxRate = restaurant.taxRate || 5;
+    const taxRate = restaurant.taxRate !== undefined && restaurant.taxRate !== null ? Number(restaurant.taxRate) : 5;
     const tax = Number(((subtotal * taxRate) / 100).toFixed(2));
     const totalAmount = Number((subtotal + tax).toFixed(2));
 
@@ -641,7 +641,7 @@ router.post('/:id/append', async (req, res) => {
 
     // Recalculate values
     order.subtotal = Number((order.subtotal + newSubtotal).toFixed(2));
-    const taxRate = restaurant.taxRate || 5;
+    const taxRate = restaurant.taxRate !== undefined && restaurant.taxRate !== null ? Number(restaurant.taxRate) : 5;
     order.tax = Number(((order.subtotal * taxRate) / 100).toFixed(2));
     order.totalAmount = Number((order.subtotal + order.tax).toFixed(2));
 

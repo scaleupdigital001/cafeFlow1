@@ -371,7 +371,7 @@ export default function AdminTablesPage() {
 
   // Calculate Manual Order Financial Totals
   const manualOrderTotals = useMemo(() => {
-    const taxRate = restaurant?.taxRate || 5;
+    const taxRate = restaurant?.taxRate !== undefined && restaurant?.taxRate !== null ? Number(restaurant.taxRate) : 5;
     const subtotal = manualCartItems.reduce((acc, item) => {
       const extraCost = item.customizations.reduce((sum, c) => sum + (c.extraPrice || 0), 0);
       return acc + (item.price + extraCost) * item.quantity;
@@ -627,7 +627,7 @@ export default function AdminTablesPage() {
         })),
         subtotal: bill.subtotal || order?.subtotal || 0,
         tax: bill.tax || order?.tax || 0,
-        taxRate: (bill as any)?.taxRate || restaurant?.taxRate || 5,
+        taxRate: (bill as any)?.taxRate !== undefined && (bill as any)?.taxRate !== null ? Number((bill as any).taxRate) : (restaurant?.taxRate !== undefined && restaurant?.taxRate !== null ? Number(restaurant.taxRate) : 5),
         totalAmount: bill.totalAmount || order?.totalAmount || 0,
         paymentStatus: bill.paymentStatus || 'paid',
         paymentMethod: bill.paymentMethod || 'cash',
@@ -682,7 +682,7 @@ export default function AdminTablesPage() {
         })),
         subtotal: order.subtotal || billData?.subtotal || 0,
         tax: order.tax || billData?.tax || 0,
-        taxRate: restaurant?.taxRate || 5,
+        taxRate: billData?.taxRate !== undefined && billData?.taxRate !== null ? Number(billData.taxRate) : (restaurant?.taxRate !== undefined && restaurant?.taxRate !== null ? Number(restaurant.taxRate) : 5),
         totalAmount: order.totalAmount || billData?.totalAmount || 0,
         paymentStatus: billData?.paymentStatus || 'paid',
         paymentMethod: billData?.paymentMethod || 'cash',

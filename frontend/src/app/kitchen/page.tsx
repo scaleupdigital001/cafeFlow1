@@ -264,7 +264,7 @@ export default function KitchenDashboard() {
       })) : [],
       subtotal: bill.subtotal || 0,
       tax: bill.tax || 0,
-      taxRate: restaurant?.taxRate || 5,
+      taxRate: restaurant?.taxRate !== undefined && restaurant?.taxRate !== null ? Number(restaurant.taxRate) : 5,
       totalAmount: bill.totalAmount || 0,
       paymentStatus: bill.paymentStatus || 'unpaid',
       paymentMethod: bill.paymentMethod || '',

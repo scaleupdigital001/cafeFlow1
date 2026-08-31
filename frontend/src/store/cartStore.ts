@@ -61,7 +61,7 @@ export const useCartStore = create<CartState>((set, get) => ({
   items: [],
   restaurantId: getSafeLocalStorage('cart_restaurantId'),
   tableNumber: getSafeLocalStorage('cart_tableNumber'),
-  taxRate: getSafeLocalStorage('cart_taxRate') ? Number(getSafeLocalStorage('cart_taxRate')) : 5,
+  taxRate: getSafeLocalStorage('cart_taxRate') !== null ? Number(getSafeLocalStorage('cart_taxRate')) : 5,
 
   setTableContext: (restaurantId, tableNumber, taxRate) => {
     setSafeLocalStorage('cart_restaurantId', restaurantId);

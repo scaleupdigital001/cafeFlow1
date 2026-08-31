@@ -33,7 +33,8 @@ export default function TableLandingPage() {
         }
 
         // Set table details in client-side state
-        setTableContext(restaurant._id, tableNum, restaurant.taxRate || 5);
+        const safeTaxRate = restaurant.taxRate !== undefined && restaurant.taxRate !== null ? Number(restaurant.taxRate) : 5;
+        setTableContext(restaurant._id, tableNum, safeTaxRate);
         setRestaurantName(restaurant.name);
 
         // Allow 1.5 seconds for visual feedback then redirect to menu

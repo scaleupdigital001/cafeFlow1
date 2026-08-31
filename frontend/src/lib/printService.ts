@@ -297,8 +297,8 @@ export const buildThermalReceiptHTML = (data: ThermalReceiptData): string => {
       <span>${formatAmount(data.subtotal)}</span>
     </div>
     <div class="totals-row">
-      <span>Taxes ${data.taxRate ? `(${data.taxRate}%)` : ''}</span>
-      <span>${formatAmount(data.tax)}</span>
+      <span>Taxes ${data.taxRate !== undefined && data.taxRate !== null ? `(${data.taxRate}%)` : ''}</span>
+      <span>${formatAmount(data.tax || 0)}</span>
     </div>
     <div class="grand-total-row">
       <span>GRAND TOTAL</span>
