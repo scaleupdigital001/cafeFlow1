@@ -76,24 +76,34 @@ export const generateBillPDF = (
       doc.moveTo(40, doc.y).lineTo(555, doc.y).strokeColor(borderColor).stroke();
       doc.moveDown(1);
 
-      // Items Table Header
-      let y = doc.y;
-      doc.font('Helvetica').fontSize(10).fillColor(secondaryColor);
-      doc.text('Item Description', 45, y);
-      doc.text('Qty', 320, y, { width: 30, align: 'center' });
-      doc.text('Price', 390, y, { width: 60, align: 'right' });
-      doc.text('Total', 485, y, { width: 70, align: 'right' });
+      // Items Table Header Helper
+      const renderTableHeader = () => {
+        let hY = doc.y;
+        doc.font('Helvetica').fontSize(10).fillColor(secondaryColor);
+        doc.text('Item Description', 45, hY);
+        doc.text('Qty', 320, hY, { width: 30, align: 'center' });
+        doc.text('Price', 390, hY, { width: 60, align: 'right' });
+        doc.text('Total', 485, hY, { width: 70, align: 'right' });
 
-      doc.moveDown(0.5);
-      doc.moveTo(40, doc.y).lineTo(555, doc.y).strokeColor('#e2e8f0').stroke();
-      doc.moveDown(0.8);
+        doc.moveDown(0.5);
+        doc.moveTo(40, doc.y).lineTo(555, doc.y).strokeColor('#e2e8f0').stroke();
+        doc.moveDown(0.8);
+      };
+
+      renderTableHeader();
 
       // Items List
       doc.fillColor(primaryColor);
       order.items.forEach((item: any) => {
+        // Page boundary safety check for long bills
+        if (doc.y > 700) {
+          doc.addPage();
+          renderTableHeader();
+        }
+
         let itemY = doc.y;
         
-        // Item Name in Bold
+        // Item Name in Bold (with word wrapping)
         doc.fontSize(10).font('Helvetica-Bold').text(item.name, 45, itemY, { width: 250 });
         
         // Customizations details
@@ -128,6 +138,10 @@ export const generateBillPDF = (
           doc.y += extraHeight / 2;
         }
       });
+
+      if (doc.y > 680) {
+        doc.addPage();
+      }
 
       doc.moveDown(1.5);
       doc.moveTo(40, doc.y).lineTo(555, doc.y).strokeColor(borderColor).stroke();
