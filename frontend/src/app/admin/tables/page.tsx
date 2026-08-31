@@ -12,11 +12,46 @@ import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '../..
 import { 
   Loader2, Plus, Trash2, Printer, Download, QrCode, 
   Layers, AlertCircle, Info, CheckCircle2, Clock, 
-  Smartphone, RefreshCw, X, Receipt, ShoppingBag, AlertTriangle, Check
+  Smartphone, RefreshCw, X, Receipt, ShoppingBag, AlertTriangle, Check,
+  Search, Utensils, Minus, Coffee, Sparkles
 } from 'lucide-react';
 
 import { Table, Order, OrderItem, WaiterRequest, Bill } from '../../../types';
 import { formatCurrency } from '../../../lib/formatters';
+
+interface DishCustomizationOption {
+  name: string;
+  extraPrice: number;
+}
+
+interface DishCustomizationGroup {
+  name: string;
+  type: 'single' | 'multiple';
+  options: DishCustomizationOption[];
+}
+
+interface DishItem {
+  _id: string;
+  name: string;
+  description?: string;
+  image?: string;
+  category: string;
+  price: number;
+  veg: boolean;
+  available: boolean;
+  customizations?: DishCustomizationGroup[];
+}
+
+interface ManualCartItem {
+  dishId: string;
+  name: string;
+  price: number;
+  quantity: number;
+  veg: boolean;
+  category: string;
+  customizations: { name: string; selectedOption: string; extraPrice: number }[];
+  specialInstructions: string;
+}
 
 /**
  * Natural numerical comparison helper for table identifiers (e.g. "1" < "2" < "9" < "10" < "11" < "20")
@@ -57,6 +92,28 @@ export default function AdminTablesPage() {
   const [tableNumber, setTableNumber] = useState('');
   const [formLoading, setFormLoading] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  // POS Manual Order Modal State
+  const [isManualOrderOpen, setIsManualOrderOpen] = useState(false);
+  const [manualOrderTable, setManualOrderTable] = useState('');
+  const [manualCustomerName, setManualCustomerName] = useState('');
+  const [manualCustomerPhone, setManualCustomerPhone] = useState('');
+  const [manualCartItems, setManualCartItems] = useState<ManualCartItem[]>([]);
+  const [manualOrderLoading, setManualOrderLoading] = useState(false);
+  const [manualOrderError, setManualOrderError] = useState<string | null>(null);
+  const [manualOrderSuccess, setManualOrderSuccess] = useState<string | null>(null);
+
+  // Menu Dishes state for manual ordering
+  const [menuDishes, setMenuDishes] = useState<DishItem[]>([]);
+  const [menuDishesLoading, setMenuDishesLoading] = useState(false);
+  const [dishSearchQuery, setDishSearchQuery] = useState('');
+  const [dishCategoryFilter, setDishCategoryFilter] = useState('All');
+  const [dishVegFilter, setDishVegFilter] = useState<'all' | 'veg' | 'non-veg'>('all');
+
+  // Customization dialog state for a selected dish
+  const [customizingDish, setCustomizingDish] = useState<DishItem | null>(null);
+  const [selectedCustomizations, setSelectedCustomizations] = useState<Record<string, { option: string; extraPrice: number }>>({});
+  const [customizingInstructions, setCustomizingInstructions] = useState('');
 
   // Bind real-time Socket.IO updates
   const socket = useSocket('restaurant', restaurantId);
@@ -222,6 +279,179 @@ export default function AdminTablesPage() {
       alert('Failed to remove table.');
     }
   };
+
+  // Fetch Menu Dishes for POS Manual Ordering
+  const fetchMenuDishes = async () => {
+    if (menuDishes.length > 0) return;
+    setMenuDishesLoading(true);
+    try {
+      const response = await api.get('/dishes/my-restaurant');
+      setMenuDishes(response.data.data || []);
+    } catch (err: any) {
+      console.error('Failed to load menu dishes:', err);
+    } finally {
+      setMenuDishesLoading(false);
+    }
+  };
+
+  // Open Manual POS Order Modal
+  const openManualOrderModal = (tableNum?: string) => {
+    if (tableNum) {
+      setManualOrderTable(tableNum);
+    } else if (tables.length > 0) {
+      setManualOrderTable(tables[0].tableNumber);
+    } else {
+      setManualOrderTable('1');
+    }
+    setManualCustomerName('');
+    setManualCustomerPhone('');
+    setManualCartItems([]);
+    setManualOrderError(null);
+    setManualOrderSuccess(null);
+    setDishSearchQuery('');
+    setDishCategoryFilter('All');
+    setDishVegFilter('all');
+    setIsManualOrderOpen(true);
+    fetchMenuDishes();
+  };
+
+  // Add Item to Manual Cart
+  const handleAddItemToManualCart = (
+    dish: DishItem,
+    custs: { name: string; selectedOption: string; extraPrice: number }[] = [],
+    instructions: string = ''
+  ) => {
+    setManualCartItems((prev) => {
+      const existingIdx = prev.findIndex(
+        (item) =>
+          item.dishId === dish._id &&
+          JSON.stringify(item.customizations) === JSON.stringify(custs) &&
+          item.specialInstructions === instructions
+      );
+
+      if (existingIdx > -1) {
+        const updated = [...prev];
+        updated[existingIdx].quantity += 1;
+        return updated;
+      }
+
+      return [
+        ...prev,
+        {
+          dishId: dish._id,
+          name: dish.name,
+          price: dish.price,
+          quantity: 1,
+          veg: dish.veg,
+          category: dish.category,
+          customizations: custs,
+          specialInstructions: instructions,
+        },
+      ];
+    });
+  };
+
+  // Update Manual Cart Item Quantity
+  const handleUpdateManualCartQty = (index: number, delta: number) => {
+    setManualCartItems((prev) => {
+      const updated = [...prev];
+      const newQty = updated[index].quantity + delta;
+      if (newQty <= 0) {
+        return updated.filter((_, i) => i !== index);
+      }
+      updated[index].quantity = newQty;
+      return updated;
+    });
+  };
+
+  // Remove Manual Cart Item
+  const handleRemoveManualCartItem = (index: number) => {
+    setManualCartItems((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  // Calculate Manual Order Financial Totals
+  const manualOrderTotals = useMemo(() => {
+    const taxRate = restaurant?.taxRate || 5;
+    const subtotal = manualCartItems.reduce((acc, item) => {
+      const extraCost = item.customizations.reduce((sum, c) => sum + (c.extraPrice || 0), 0);
+      return acc + (item.price + extraCost) * item.quantity;
+    }, 0);
+    const tax = Number(((subtotal * taxRate) / 100).toFixed(2));
+    const total = Number((subtotal + tax).toFixed(2));
+    return { subtotal, tax, taxRate, total };
+  }, [manualCartItems, restaurant]);
+
+  // Submit Manual Order to Backend
+  const handleManualOrderSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!manualOrderTable) {
+      setManualOrderError('Please select a table number.');
+      return;
+    }
+    if (manualCartItems.length === 0) {
+      setManualOrderError('Please add at least one dish to the order.');
+      return;
+    }
+
+    setManualOrderLoading(true);
+    setManualOrderError(null);
+
+    try {
+      const payload = {
+        tableNumber: manualOrderTable,
+        customerName: manualCustomerName.trim() || 'Walk-in Guest',
+        phoneNumber: manualCustomerPhone.trim() || '9999999999',
+        items: manualCartItems.map((i) => ({
+          dishId: i.dishId,
+          name: i.name,
+          quantity: i.quantity,
+          customizations: i.customizations,
+          specialInstructions: i.specialInstructions,
+        })),
+      };
+
+      await api.post('/orders/manual', payload);
+      setManualOrderSuccess(`Order for Table ${manualOrderTable} placed successfully!`);
+
+      // Refresh dashboard data instantly
+      await fetchAllData();
+
+      setTimeout(() => {
+        setIsManualOrderOpen(false);
+        setManualCartItems([]);
+        setManualOrderSuccess(null);
+      }, 1000);
+    } catch (err: any) {
+      setManualOrderError(err.response?.data?.message || 'Failed to place manual order.');
+    } finally {
+      setManualOrderLoading(false);
+    }
+  };
+
+  // Dish Categories and Filtering for POS Menu Browser
+  const dishCategories = useMemo(() => {
+    const cats = new Set<string>();
+    cats.add('All');
+    for (const d of menuDishes) {
+      if (d.category) cats.add(d.category);
+    }
+    return Array.from(cats);
+  }, [menuDishes]);
+
+  const filteredDishes = useMemo(() => {
+    return menuDishes.filter((d) => {
+      if (!d.available) return false;
+      const matchesSearch =
+        d.name.toLowerCase().includes(dishSearchQuery.toLowerCase()) ||
+        (d.description && d.description.toLowerCase().includes(dishSearchQuery.toLowerCase()));
+      const matchesCat = dishCategoryFilter === 'All' || d.category === dishCategoryFilter;
+      const matchesVeg =
+        dishVegFilter === 'all' ||
+        (dishVegFilter === 'veg' && d.veg) ||
+        (dishVegFilter === 'non-veg' && !d.veg);
+      return matchesSearch && matchesCat && matchesVeg;
+    });
+  }, [menuDishes, dishSearchQuery, dishCategoryFilter, dishVegFilter]);
 
   // Precompute derived table information indexed by tableNumber (O(N) data passes instead of O(tables * N))
   const tableInfoMap = React.useMemo(() => {
@@ -469,31 +699,40 @@ export default function AdminTablesPage() {
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
           <h2 className="font-serif font-black text-2xl tracking-tight">Table Operations & Billing</h2>
-          <p className="text-xs text-muted-foreground">Monitor real-time table dining activity, bill requests, and execute final bill printing.</p>
+          <p className="text-xs text-muted-foreground">Monitor real-time table dining activity, take manual orders, and execute final bill printing.</p>
         </div>
 
-        {/* Tab switch buttons */}
-        <div className="flex items-center gap-2 bg-secondary/50 p-1 rounded-xl border border-border/60">
-          <button
-            onClick={() => setActiveTab('live')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-              activeTab === 'live'
-                ? 'bg-primary text-primary-foreground shadow-md'
-                : 'text-muted-foreground hover:bg-secondary'
-            }`}
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            onClick={() => openManualOrderModal()}
+            className="bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-bold shadow-md cursor-pointer gap-1.5 px-3.5 py-2 h-auto"
           >
-            <Receipt className="w-4 h-4" /> Live Table Operations
-          </button>
-          <button
-            onClick={() => setActiveTab('qr')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-              activeTab === 'qr'
-                ? 'bg-primary text-primary-foreground shadow-md'
-                : 'text-muted-foreground hover:bg-secondary'
-            }`}
-          >
-            <QrCode className="w-4 h-4" /> QR Stickers Roster
-          </button>
+            <Plus className="w-4 h-4" /> Take Order (POS)
+          </Button>
+
+          {/* Tab switch buttons */}
+          <div className="flex items-center gap-2 bg-secondary/50 p-1 rounded-xl border border-border/60">
+            <button
+              onClick={() => setActiveTab('live')}
+              className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'live'
+                  ? 'bg-primary text-primary-foreground shadow-md'
+                  : 'text-muted-foreground hover:bg-secondary'
+              }`}
+            >
+              <Receipt className="w-4 h-4" /> Live Table Operations
+            </button>
+            <button
+              onClick={() => setActiveTab('qr')}
+              className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'qr'
+                  ? 'bg-primary text-primary-foreground shadow-md'
+                  : 'text-muted-foreground hover:bg-secondary'
+              }`}
+            >
+              <QrCode className="w-4 h-4" /> QR Stickers Roster
+            </button>
+          </div>
         </div>
       </div>
 
@@ -584,17 +823,11 @@ export default function AdminTablesPage() {
                               ? 'default'
                               : 'secondary'
                           }
-                          className={`text-[10px] py-0.5 font-bold capitalize gap-1 ${
-                            info.status === 'BILL_REQUESTED'
-                              ? 'bg-amber-600 text-white animate-pulse'
-                              : info.status === 'SERVED'
-                              ? 'bg-emerald-600 text-white'
-                              : ''
-                          }`}
+                          className="text-[10px] font-bold uppercase tracking-wider flex items-center gap-1"
                         >
                           {info.status === 'BILL_REQUESTED' ? (
                             <>
-                              <AlertTriangle className="w-3 h-3" /> BILL REQUESTED
+                              <AlertTriangle className="w-3 h-3 text-amber-600" /> BILL REQUESTED
                             </>
                           ) : info.status === 'SERVED' ? (
                             <>
@@ -641,31 +874,50 @@ export default function AdminTablesPage() {
                     {/* Card Action Button */}
                     <div className="p-4 border-t border-border/40 bg-secondary/10">
                       {info.isEligibleForBilling ? (
-                        <Button
-                          onClick={() => setSelectedTableNum(table.tableNumber)}
-                          className={`w-full text-xs font-bold shadow-md cursor-pointer gap-1.5 ${
-                            info.status === 'BILL_REQUESTED'
-                              ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-amber-500/20'
-                              : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20'
-                          }`}
-                        >
-                          <Receipt className="w-4 h-4" /> VIEW ORDER & COMPLETE BILL
-                        </Button>
+                        <div className="flex gap-2">
+                          <Button
+                            onClick={() => setSelectedTableNum(table.tableNumber)}
+                            className={`flex-1 text-xs font-bold shadow-md cursor-pointer gap-1.5 ${
+                              info.status === 'BILL_REQUESTED'
+                                ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-amber-500/20'
+                                : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20'
+                            }`}
+                          >
+                            <Receipt className="w-4 h-4" /> View & Complete Bill
+                          </Button>
+                          <Button
+                            onClick={() => openManualOrderModal(table.tableNumber)}
+                            variant="outline"
+                            className="px-3 text-xs font-bold cursor-pointer gap-1"
+                            title="Add more items to this table"
+                          >
+                            <Plus className="w-4 h-4" /> Add
+                          </Button>
+                        </div>
                       ) : isActive ? (
-                        <Button
-                          onClick={() => setSelectedTableNum(table.tableNumber)}
-                          variant="outline"
-                          className="w-full text-xs font-bold cursor-pointer gap-1.5"
-                        >
-                          <ShoppingBag className="w-4 h-4" /> View Order Details
-                        </Button>
+                        <div className="flex gap-2">
+                          <Button
+                            onClick={() => setSelectedTableNum(table.tableNumber)}
+                            variant="outline"
+                            className="flex-1 text-xs font-bold cursor-pointer gap-1.5"
+                          >
+                            <ShoppingBag className="w-4 h-4" /> View Details
+                          </Button>
+                          <Button
+                            onClick={() => openManualOrderModal(table.tableNumber)}
+                            variant="secondary"
+                            className="px-3 text-xs font-bold cursor-pointer gap-1 text-primary hover:bg-secondary"
+                            title="Add more items to this table"
+                          >
+                            <Plus className="w-4 h-4" /> Add Items
+                          </Button>
+                        </div>
                       ) : (
                         <Button
-                          disabled
-                          variant="secondary"
-                          className="w-full text-xs font-semibold opacity-50 cursor-not-allowed"
+                          onClick={() => openManualOrderModal(table.tableNumber)}
+                          className="w-full text-xs font-bold bg-primary hover:bg-primary/90 text-primary-foreground shadow-md cursor-pointer gap-1.5"
                         >
-                          Table Available
+                          <Plus className="w-4 h-4" /> Take Order
                         </Button>
                       )}
                     </div>
@@ -893,31 +1145,520 @@ export default function AdminTablesPage() {
             </div>
 
             {/* Modal Footer Actions */}
-            <div className="p-4 border-t border-border flex items-center justify-end gap-3 bg-secondary/10">
-              <Button variant="outline" onClick={() => setSelectedTableNum(null)} className="cursor-pointer font-bold">
-                Cancel
+            <div className="p-4 border-t border-border flex items-center justify-between gap-3 bg-secondary/10">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  const tNum = selectedTableNum;
+                  setSelectedTableNum(null);
+                  openManualOrderModal(tNum || undefined);
+                }}
+                className="cursor-pointer font-bold gap-1.5 text-primary hover:text-primary hover:bg-primary/10"
+              >
+                <Plus className="w-4 h-4" /> Add Items to Table
               </Button>
 
-              {selectedTableInfo.latestOrder && (
-                <Button
-                  disabled={completingTable}
-                  onClick={() => handleAdminCompleteAndPrint(selectedTableInfo.latestOrder!)}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer font-bold gap-1.5 shadow-md shadow-emerald-500/20"
-                >
-                  {completingTable ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" /> Finalizing & Printing...
-                    </>
-                  ) : (
-                    <>
-                      <Printer className="w-4 h-4" />{' '}
-                      {selectedTableInfo.matchingBill?.paymentStatus === 'verifying'
-                        ? 'APPROVE PAYMENT & PRINT BILL'
-                        : 'COMPLETE & PRINT BILL'}
-                    </>
-                  )}
+              <div className="flex items-center gap-3">
+                <Button variant="outline" onClick={() => setSelectedTableNum(null)} className="cursor-pointer font-bold">
+                  Cancel
                 </Button>
-              )}
+
+                {selectedTableInfo.latestOrder && (
+                  <Button
+                    disabled={completingTable}
+                    onClick={() => handleAdminCompleteAndPrint(selectedTableInfo.latestOrder!)}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer font-bold gap-1.5 shadow-md shadow-emerald-500/20"
+                  >
+                    {completingTable ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" /> Finalizing & Printing...
+                      </>
+                    ) : (
+                      <>
+                        <Printer className="w-4 h-4" />{' '}
+                        {selectedTableInfo.matchingBill?.paymentStatus === 'verifying'
+                          ? 'APPROVE PAYMENT & PRINT BILL'
+                          : 'COMPLETE & PRINT BILL'}
+                      </>
+                    )}
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* POS MANUAL ORDER MODAL */}
+      {isManualOrderOpen && (
+        <div className="fixed inset-0 z-50 bg-stone-950/70 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4">
+          <div className="bg-card text-card-foreground w-full max-w-5xl rounded-2xl border border-border shadow-2xl overflow-hidden flex flex-col max-h-[92vh] animate-fade-in">
+            {/* Modal Header */}
+            <div className="p-4 sm:p-5 border-b border-border flex items-center justify-between bg-secondary/20">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-primary/10 text-primary">
+                  <Utensils className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-serif font-black text-lg sm:text-xl text-foreground flex items-center gap-2">
+                    Take Manual Order (POS)
+                  </h3>
+                  <span className="text-xs text-muted-foreground">
+                    Punch in food & drink orders directly for dine-in tables
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsManualOrderOpen(false)}
+                className="p-1.5 rounded-full bg-secondary text-muted-foreground hover:text-foreground cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body: 2 Columns (Left: Dish Browser, Right: Cart & Customer Info) */}
+            <div className="flex-1 overflow-hidden grid grid-cols-1 lg:grid-cols-12 min-h-0">
+              {/* Left Column: Menu Dish Browser (7 cols) */}
+              <div className="lg:col-span-7 p-4 sm:p-5 overflow-y-auto space-y-4 border-b lg:border-b-0 lg:border-r border-border">
+                {/* Search & Filter Bar */}
+                <div className="space-y-2.5">
+                  <div className="relative">
+                    <Search className="w-4 h-4 absolute left-3 top-3 text-muted-foreground" />
+                    <input
+                      type="text"
+                      value={dishSearchQuery}
+                      onChange={(e) => setDishSearchQuery(e.target.value)}
+                      placeholder="Search menu dishes by name or keyword..."
+                      className="w-full text-xs bg-secondary/40 text-foreground border border-border rounded-xl pl-9 pr-3 py-2.5 outline-none focus:ring-2 focus:ring-primary focus:bg-background transition-all"
+                    />
+                  </div>
+
+                  {/* Veg / Non-Veg Toggle & Categories */}
+                  <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                    <div className="flex items-center bg-secondary/50 rounded-lg p-0.5 border border-border/50">
+                      <button
+                        type="button"
+                        onClick={() => setDishVegFilter('all')}
+                        className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all cursor-pointer ${
+                          dishVegFilter === 'all' ? 'bg-primary text-primary-foreground shadow-xs' : 'text-muted-foreground'
+                        }`}
+                      >
+                        All
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDishVegFilter('veg')}
+                        className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                          dishVegFilter === 'veg' ? 'bg-emerald-600 text-white shadow-xs' : 'text-emerald-600 dark:text-emerald-400'
+                        }`}
+                      >
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" /> Veg
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDishVegFilter('non-veg')}
+                        className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                          dishVegFilter === 'non-veg' ? 'bg-rose-600 text-white shadow-xs' : 'text-rose-600 dark:text-rose-400'
+                        }`}
+                      >
+                        <span className="w-2 h-2 rounded-full bg-rose-500 inline-block" /> Non-Veg
+                      </button>
+                    </div>
+
+                    {/* Category Pills */}
+                    <div className="flex items-center gap-1 overflow-x-auto pb-1 max-w-full">
+                      {dishCategories.map((cat) => (
+                        <button
+                          key={cat}
+                          type="button"
+                          onClick={() => setDishCategoryFilter(cat)}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold whitespace-nowrap transition-all cursor-pointer border ${
+                            dishCategoryFilter === cat
+                              ? 'bg-primary text-primary-foreground border-primary'
+                              : 'bg-secondary/40 text-muted-foreground border-border/60 hover:bg-secondary'
+                          }`}
+                        >
+                          {cat}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Dishes Grid */}
+                {menuDishesLoading ? (
+                  <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+                    <Loader2 className="w-7 h-7 animate-spin text-primary mb-2" />
+                    <span className="text-xs font-semibold">Loading restaurant menu dishes...</span>
+                  </div>
+                ) : filteredDishes.length === 0 ? (
+                  <div className="text-center py-16 text-muted-foreground space-y-2">
+                    <Coffee className="w-9 h-9 text-muted-foreground/30 mx-auto" />
+                    <p className="text-xs font-semibold">No dishes found matching your filter.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[48vh] overflow-y-auto pr-1">
+                    {filteredDishes.map((dish) => {
+                      const hasCustomizations = dish.customizations && dish.customizations.length > 0;
+
+                      return (
+                        <div
+                          key={dish._id}
+                          className="bg-secondary/20 hover:bg-secondary/40 border border-border/60 rounded-xl p-3 flex flex-col justify-between gap-2.5 transition-all group"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-1.5">
+                                <span
+                                  className={`w-2 h-2 rounded-full shrink-0 ${
+                                    dish.veg ? 'bg-emerald-500' : 'bg-rose-500'
+                                  }`}
+                                  title={dish.veg ? 'Vegetarian' : 'Non-Vegetarian'}
+                                />
+                                <h4 className="font-bold text-xs text-foreground line-clamp-1">{dish.name}</h4>
+                              </div>
+                              {dish.description && (
+                                <p className="text-[10px] text-muted-foreground line-clamp-1">{dish.description}</p>
+                              )}
+                              <span className="text-[10px] text-primary/80 font-semibold bg-primary/10 px-1.5 py-0.5 rounded">
+                                {dish.category}
+                              </span>
+                            </div>
+
+                            <span className="font-extrabold text-xs text-foreground whitespace-nowrap">
+                              {formatCurrency(dish.price)}
+                            </span>
+                          </div>
+
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => {
+                              if (hasCustomizations) {
+                                setCustomizingDish(dish);
+                                const defaultCusts: Record<string, { option: string; extraPrice: number }> = {};
+                                dish.customizations?.forEach((grp) => {
+                                  if (grp.options.length > 0) {
+                                    defaultCusts[grp.name] = {
+                                      option: grp.options[0].name,
+                                      extraPrice: grp.options[0].extraPrice || 0,
+                                    };
+                                  }
+                                });
+                                setSelectedCustomizations(defaultCusts);
+                                setCustomizingInstructions('');
+                              } else {
+                                handleAddItemToManualCart(dish);
+                              }
+                            }}
+                            className="w-full text-xs font-bold bg-primary hover:bg-primary/90 text-primary-foreground cursor-pointer h-8 gap-1 shadow-xs"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            {hasCustomizations ? 'Customize & Add' : 'Add to Order'}
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Right Column: Order Configuration & Live Cart (5 cols) */}
+              <div className="lg:col-span-5 p-4 sm:p-5 flex flex-col justify-between overflow-y-auto space-y-4 bg-secondary/10">
+                {/* Table & Customer Setup */}
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold text-muted-foreground mb-1 uppercase tracking-wide">
+                        Dining Table *
+                      </label>
+                      <select
+                        value={manualOrderTable}
+                        onChange={(e) => setManualOrderTable(e.target.value)}
+                        className="w-full text-xs bg-background text-foreground border border-border rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-primary font-bold transition-all"
+                      >
+                        {tables.map((t) => (
+                          <option key={t._id} value={t.tableNumber}>
+                            Table {t.tableNumber}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-muted-foreground mb-1 uppercase tracking-wide">
+                        Guest Name
+                      </label>
+                      <input
+                        type="text"
+                        value={manualCustomerName}
+                        onChange={(e) => setManualCustomerName(e.target.value)}
+                        placeholder="e.g. Rahul / Walk-in"
+                        className="w-full text-xs bg-background text-foreground border border-border rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-primary transition-all"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-muted-foreground mb-1 uppercase tracking-wide">
+                      Phone Number (Optional)
+                    </label>
+                    <input
+                      type="tel"
+                      value={manualCustomerPhone}
+                      onChange={(e) => setManualCustomerPhone(e.target.value)}
+                      placeholder="10-digit mobile number"
+                      maxLength={10}
+                      className="w-full text-xs bg-background text-foreground border border-border rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-primary transition-all"
+                    />
+                  </div>
+                </div>
+
+                {/* Selected Order Items List */}
+                <div className="flex-1 space-y-2">
+                  <div className="flex items-center justify-between border-b border-border/50 pb-2">
+                    <span className="text-xs font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                      <ShoppingBag className="w-3.5 h-3.5 text-primary" /> Order Items ({manualCartItems.reduce((sum, i) => sum + i.quantity, 0)})
+                    </span>
+                    {manualCartItems.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setManualCartItems([])}
+                        className="text-[10px] text-destructive hover:underline font-bold cursor-pointer"
+                      >
+                        Clear All
+                      </button>
+                    )}
+                  </div>
+
+                  {manualCartItems.length === 0 ? (
+                    <div className="py-10 text-center text-muted-foreground text-xs space-y-1">
+                      <Utensils className="w-6 h-6 text-muted-foreground/30 mx-auto mb-1" />
+                      <p className="font-semibold">No items selected yet</p>
+                      <p className="text-[10px] opacity-70">Click "+ Add" on any menu dish on the left</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 max-h-[28vh] overflow-y-auto pr-1 divide-y divide-border/30">
+                      {manualCartItems.map((item, idx) => {
+                        const extraPrice = item.customizations.reduce((acc, c) => acc + (c.extraPrice || 0), 0);
+                        const unitTotal = item.price + extraPrice;
+                        const lineTotal = unitTotal * item.quantity;
+
+                        return (
+                          <div key={idx} className="pt-2 flex items-start justify-between gap-2 text-xs">
+                            <div className="flex-1 space-y-0.5">
+                              <div className="flex items-center gap-1 font-bold text-foreground">
+                                <span className={`w-1.5 h-1.5 rounded-full ${item.veg ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                                <span>{item.name}</span>
+                              </div>
+                              {item.customizations.length > 0 && (
+                                <div className="text-[10px] text-muted-foreground italic">
+                                  + {item.customizations.map((c) => `${c.name}: ${c.selectedOption}`).join(', ')}
+                                </div>
+                              )}
+                              {item.specialInstructions && (
+                                <div className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold">
+                                  * {item.specialInstructions}
+                                </div>
+                              )}
+                              <div className="text-[10px] text-muted-foreground font-semibold">
+                                {formatCurrency(unitTotal)} each
+                              </div>
+                            </div>
+
+                            {/* Qty & Line Total Controls */}
+                            <div className="flex items-center gap-2">
+                              <div className="flex items-center border border-border rounded-lg bg-background overflow-hidden">
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateManualCartQty(idx, -1)}
+                                  className="px-2 py-1 hover:bg-secondary text-muted-foreground hover:text-foreground cursor-pointer"
+                                >
+                                  <Minus className="w-3 h-3" />
+                                </button>
+                                <span className="px-2 text-xs font-bold text-foreground">{item.quantity}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateManualCartQty(idx, 1)}
+                                  className="px-2 py-1 hover:bg-secondary text-muted-foreground hover:text-foreground cursor-pointer"
+                                >
+                                  <Plus className="w-3 h-3" />
+                                </button>
+                              </div>
+
+                              <span className="font-black text-xs text-foreground min-w-[55px] text-right">
+                                {formatCurrency(lineTotal)}
+                              </span>
+
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveManualCartItem(idx)}
+                                className="p-1 text-muted-foreground hover:text-destructive cursor-pointer rounded"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Financial Summary & Actions */}
+                <div className="border-t border-border pt-3 space-y-3">
+                  <div className="space-y-1 text-xs text-muted-foreground">
+                    <div className="flex justify-between">
+                      <span>Subtotal:</span>
+                      <span className="font-bold text-foreground">{formatCurrency(manualOrderTotals.subtotal)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Taxes & GST ({manualOrderTotals.taxRate}%):</span>
+                      <span className="font-bold text-foreground">{formatCurrency(manualOrderTotals.tax)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm font-black text-foreground pt-1 border-t border-border/40">
+                      <span>Grand Total:</span>
+                      <span className="text-primary text-base">{formatCurrency(manualOrderTotals.total)}</span>
+                    </div>
+                  </div>
+
+                  {manualOrderError && (
+                    <div className="bg-destructive/10 border border-destructive/20 text-destructive text-xs px-3 py-2 rounded-xl flex items-center gap-1.5">
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                      <span>{manualOrderError}</span>
+                    </div>
+                  )}
+
+                  {manualOrderSuccess && (
+                    <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs px-3 py-2 rounded-xl flex items-center gap-1.5">
+                      <CheckCircle2 className="w-4 h-4 shrink-0" />
+                      <span>{manualOrderSuccess}</span>
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-2 pt-1">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setIsManualOrderOpen(false)}
+                      className="cursor-pointer font-bold flex-1"
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      type="button"
+                      disabled={manualOrderLoading || manualCartItems.length === 0}
+                      onClick={handleManualOrderSubmit}
+                      className="bg-primary hover:bg-primary/90 text-primary-foreground cursor-pointer font-bold flex-[2] gap-1.5 shadow-md shadow-primary/20"
+                    >
+                      {manualOrderLoading ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" /> Placing Order...
+                        </>
+                      ) : (
+                        <>
+                          <Check className="w-4 h-4" /> Send Order to Kitchen
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DISH CUSTOMIZATION SUB-MODAL */}
+      {customizingDish && (
+        <div className="fixed inset-0 z-60 bg-stone-950/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-card text-card-foreground w-full max-w-md rounded-2xl border border-border shadow-2xl overflow-hidden p-5 space-y-4 animate-scale-in">
+            <div className="flex justify-between items-start border-b border-border/50 pb-3">
+              <div>
+                <h4 className="font-serif font-black text-base text-foreground">{customizingDish.name}</h4>
+                <span className="text-xs font-bold text-primary">{formatCurrency(customizingDish.price)} Base Price</span>
+              </div>
+              <button
+                onClick={() => setCustomizingDish(null)}
+                className="p-1 rounded-full bg-secondary text-muted-foreground hover:text-foreground cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Customization Options */}
+            <div className="space-y-4 max-h-[50vh] overflow-y-auto pr-1">
+              {customizingDish.customizations?.map((grp, gIdx) => (
+                <div key={gIdx} className="space-y-2 border border-border/50 rounded-xl p-3 bg-secondary/20">
+                  <span className="text-xs font-bold text-foreground block">{grp.name}</span>
+                  <div className="space-y-1.5">
+                    {grp.options.map((opt, oIdx) => {
+                      const isSelected = selectedCustomizations[grp.name]?.option === opt.name;
+
+                      return (
+                        <label
+                          key={oIdx}
+                          onClick={() => {
+                            setSelectedCustomizations((prev) => ({
+                              ...prev,
+                              [grp.name]: { option: opt.name, extraPrice: opt.extraPrice || 0 },
+                            }));
+                          }}
+                          className={`flex items-center justify-between p-2 rounded-lg border text-xs cursor-pointer transition-all ${
+                            isSelected
+                              ? 'border-primary bg-primary/10 text-primary font-bold'
+                              : 'border-border/40 hover:bg-secondary/50 text-foreground'
+                          }`}
+                        >
+                          <span>{opt.name}</span>
+                          <span className="text-[11px] font-semibold opacity-80">
+                            {opt.extraPrice > 0 ? `+${formatCurrency(opt.extraPrice)}` : 'Free'}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+
+              {/* Special Note */}
+              <div>
+                <label className="block text-[11px] font-bold text-muted-foreground mb-1 uppercase tracking-wide">
+                  Special Kitchen Note
+                </label>
+                <input
+                  type="text"
+                  value={customizingInstructions}
+                  onChange={(e) => setCustomizingInstructions(e.target.value)}
+                  placeholder="e.g. Extra hot, crisp, less oil"
+                  className="w-full text-xs bg-secondary/30 text-foreground border border-border rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-primary transition-all"
+                />
+              </div>
+            </div>
+
+            {/* Customization Footer */}
+            <div className="flex items-center justify-end gap-2 border-t border-border/50 pt-3">
+              <Button variant="outline" size="sm" onClick={() => setCustomizingDish(null)} className="cursor-pointer font-bold">
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => {
+                  const custArray = Object.keys(selectedCustomizations).map((grpName) => {
+                    const item = selectedCustomizations[grpName];
+                    return {
+                      name: grpName,
+                      selectedOption: item.option,
+                      extraPrice: item.extraPrice,
+                    };
+                  });
+                  handleAddItemToManualCart(customizingDish, custArray, customizingInstructions.trim());
+                  setCustomizingDish(null);
+                }}
+                className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold cursor-pointer"
+              >
+                Add to Cart
+              </Button>
             </div>
           </div>
         </div>
@@ -925,3 +1666,4 @@ export default function AdminTablesPage() {
     </div>
   );
 }
+

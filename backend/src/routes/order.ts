@@ -184,6 +184,125 @@ router.post('/', async (req, res) => {
 });
 
 /**
+ * @route   POST /api/orders/manual
+ * @desc    Place a manual POS order by staff/admin for a dining table
+ * @access  Private (Restaurant Admin / Staff / Super Admin)
+ */
+router.post('/manual', protect, restrictTo('restaurant_admin', 'staff', 'super_admin'), async (req: AuthRequest, res: Response) => {
+  try {
+    let restaurantId = req.user?.restaurantId || req.body.restaurantId;
+    if (!restaurantId) {
+      const firstRest = await Restaurant.findOne();
+      restaurantId = firstRest ? firstRest._id : null;
+    }
+
+    if (!restaurantId) {
+      return res.status(400).json({ success: false, message: 'Restaurant identifier is required.' });
+    }
+
+    const { tableNumber, customerName, phoneNumber, items, specialInstructions } = req.body;
+
+    if (!tableNumber || !items || !items.length) {
+      return res.status(400).json({ success: false, message: 'Table number and at least one item are required.' });
+    }
+
+    const restaurant = await Restaurant.findById(restaurantId);
+    if (!restaurant) {
+      return res.status(404).json({ success: false, message: 'Restaurant not found.' });
+    }
+
+    // Default guest info if not provided
+    const guestName = (customerName && customerName.trim()) ? customerName.trim() : 'Walk-in Guest';
+    let cleanedPhone = phoneNumber ? phoneNumber.replace(/\D/g, '') : '';
+    if (cleanedPhone.length !== 10) {
+      cleanedPhone = '9999999999';
+    }
+
+    // Compute costs securely from Database pricing
+    let subtotal = 0;
+    const validatedItems = [];
+
+    for (const item of items) {
+      const dish = await Dish.findById(item.dishId);
+      if (!dish) {
+        return res.status(404).json({ success: false, message: `Dish item "${item.name || item.dishId}" not found.` });
+      }
+
+      if (!dish.available) {
+        return res.status(400).json({ success: false, message: `Dish "${dish.name}" is currently marked out of stock.` });
+      }
+
+      let itemPrice = dish.price;
+      const itemCustomizations = [];
+
+      if (item.customizations && item.customizations.length > 0) {
+        for (const selectedCust of item.customizations) {
+          const dbCustGroup = dish.customizations.find(g => g.name === selectedCust.name);
+          if (dbCustGroup) {
+            const dbOption = dbCustGroup.options.find(o => o.name === selectedCust.selectedOption);
+            if (dbOption) {
+              itemCustomizations.push({
+                name: selectedCust.name,
+                selectedOption: selectedCust.selectedOption,
+                extraPrice: dbOption.extraPrice,
+              });
+              itemPrice += dbOption.extraPrice;
+            }
+          }
+        }
+      }
+
+      const itemTotal = itemPrice * item.quantity;
+      subtotal += itemTotal;
+
+      validatedItems.push({
+        dishId: dish._id,
+        name: dish.name,
+        price: dish.price,
+        quantity: item.quantity,
+        customizations: itemCustomizations,
+        specialInstructions: item.specialInstructions || specialInstructions || '',
+      });
+    }
+
+    const taxRate = restaurant.taxRate || 5;
+    const tax = Number(((subtotal * taxRate) / 100).toFixed(2));
+    const totalAmount = Number((subtotal + tax).toFixed(2));
+
+    const order = new Order({
+      restaurantId,
+      customerName: guestName,
+      phoneNumber: cleanedPhone,
+      tableNumber: String(tableNumber),
+      items: validatedItems,
+      status: 'received',
+      subtotal,
+      tax,
+      totalAmount,
+    });
+    await order.save();
+
+    // Broadcast real-time Socket.IO notification to restaurant room
+    const io = req.app.get('io');
+    if (io) {
+      io.to(restaurantId.toString()).emit('new_order', order);
+      io.to(restaurantId.toString()).emit('table_status_updated', { tableNumber: String(tableNumber) });
+      console.log(`[Socket] Dispatched new manual order event to restaurant room: ${restaurantId}`);
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: 'Manual table order created successfully.',
+      data: order,
+    });
+  } catch (error: any) {
+    console.error('Manual order placement error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to place manual order.', error: error.message });
+  }
+});
+
+
+/**
  * @route   GET /api/orders or GET /api/orders/my-restaurant
  * @desc    Fetch active and historical orders of restaurant tenant
  * @access  Private (Restaurant Admin / Staff)
