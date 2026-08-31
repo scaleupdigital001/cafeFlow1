@@ -2,11 +2,13 @@
 
 import React, { useEffect, useState } from 'react';
 import api from '../../../lib/axios';
+import { useAuthStore } from '../../../store/authStore';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
 import { Loader2, Store, MapPin, Phone, FileText, Percent, Smartphone, Save, CheckCircle2 } from 'lucide-react';
 
 export default function SettingsPage() {
+  const { updateRestaurant } = useAuthStore();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -28,6 +30,7 @@ export default function SettingsPage() {
         const res = await api.get('/restaurants/my-restaurant');
         if (res.data.success) {
           const restaurant = res.data.data;
+          updateRestaurant(restaurant);
           setName(restaurant.name || '');
           setAddress(restaurant.address || '');
           setContact(restaurant.contact || '');
@@ -46,7 +49,7 @@ export default function SettingsPage() {
     };
 
     fetchSettings();
-  }, []);
+  }, [updateRestaurant]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -69,6 +72,8 @@ export default function SettingsPage() {
       });
 
       if (response.data.success) {
+        const updatedRestaurant = response.data.data;
+        updateRestaurant(updatedRestaurant);
         setSuccessMsg('Restaurant profile and UPI payment settings saved successfully!');
         // Clear message after 4 seconds
         setTimeout(() => setSuccessMsg(null), 4000);

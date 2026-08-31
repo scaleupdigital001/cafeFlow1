@@ -141,7 +141,7 @@ export const generateBillPDF = (
       doc.fillColor(primaryColor).text(`Rs. ${order.subtotal.toFixed(2)}`, 485, totalY, { align: 'right', width: 70 });
 
       totalY += 18;
-      doc.fillColor(secondaryColor).text(`GST (${restaurant.taxRate}%):`, 340, totalY);
+      doc.fillColor(secondaryColor).text(`GST (${restaurant.taxRate !== undefined && restaurant.taxRate !== null ? restaurant.taxRate : 5}%):`, 340, totalY);
       doc.fillColor(primaryColor).text(`Rs. ${order.tax.toFixed(2)}`, 485, totalY, { align: 'right', width: 70 });
 
       totalY += 22;

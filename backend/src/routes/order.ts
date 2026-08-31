@@ -384,15 +384,24 @@ router.patch('/:id/status', protect, restrictTo('restaurant_admin', 'staff'), as
     let populatedBillData = null;
     if (status === 'completed') {
       let billObj = await Bill.findOne({ orderId: order._id });
-      if (!billObj) {
-        const restaurant = await Restaurant.findById(req.user.restaurantId);
-        if (restaurant) {
+      const restaurant = await Restaurant.findById(req.user?.restaurantId || order.restaurantId);
+
+      if (restaurant) {
+        // Recalculate tax & totalAmount based on current restaurant taxRate
+        const taxRate = restaurant.taxRate !== undefined && restaurant.taxRate !== null ? Number(restaurant.taxRate) : 5;
+        const currentTax = Number(((order.subtotal * taxRate) / 100).toFixed(2));
+        const currentTotal = Number((order.subtotal + currentTax).toFixed(2));
+        order.tax = currentTax;
+        order.totalAmount = currentTotal;
+        await order.save();
+
+        if (!billObj) {
           const billNo = generateBillNumber();
           const pdfFilePath = await generateBillPDF(restaurant, order, billNo);
 
           const bill = new Bill({
             billNumber: billNo,
-            restaurantId: req.user.restaurantId,
+            restaurantId: restaurant._id,
             orderId: order._id,
             subtotal: order.subtotal,
             tax: order.tax,
@@ -411,14 +420,16 @@ router.patch('/:id/status', protect, restrictTo('restaurant_admin', 'staff'), as
               .populate('restaurantId', 'name address contact gstNumber paymentSettings');
             io.to(order._id.toString()).emit('bill_ready', populatedBill);
           }
+        } else {
+          // If bill exists, sync final tax and mark paid
+          billObj.tax = order.tax;
+          billObj.totalAmount = order.totalAmount;
+          billObj.paymentStatus = 'paid';
+          if (!billObj.paymentMethod && paymentMethod) {
+            billObj.paymentMethod = paymentMethod as any;
+          }
+          await billObj.save();
         }
-      } else {
-        // If bill exists (e.g., from customer payment request), mark it as paid
-        billObj.paymentStatus = 'paid';
-        if (!billObj.paymentMethod && paymentMethod) {
-          billObj.paymentMethod = paymentMethod as any;
-        }
-        await billObj.save();
       }
 
       if (billObj) {

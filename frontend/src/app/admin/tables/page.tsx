@@ -70,7 +70,7 @@ export const compareTableNumbers = (aStr: string, bStr: string): number => {
 };
 
 export default function AdminTablesPage() {
-  const { user, restaurant } = useAuthStore();
+  const { user, restaurant, updateRestaurant } = useAuthStore();
   const restaurantId = user?.restaurantId;
 
   // View state: 'live' (Operational Dashboard) or 'qr' (Sticker Roster)
@@ -129,11 +129,12 @@ export default function AdminTablesPage() {
     inFlightRef.current = true;
     setLoading(true);
     try {
-      const [tablesRes, ordersRes, requestsRes, billsRes] = await Promise.allSettled([
+      const [tablesRes, ordersRes, requestsRes, billsRes, restRes] = await Promise.allSettled([
         api.get('/tables'),
         api.get('/orders/my-restaurant'),
         api.get('/orders/waiter-requests/active'),
         api.get('/bills/recent'),
+        api.get('/restaurants/my-restaurant'),
       ]);
 
       if (tablesRes.status === 'fulfilled') setTables(tablesRes.value.data.data);
@@ -144,6 +145,9 @@ export default function AdminTablesPage() {
       }
       if (requestsRes.status === 'fulfilled') setWaiterRequests(requestsRes.value.data.data);
       if (billsRes.status === 'fulfilled') setRecentBills(billsRes.value.data.data);
+      if (restRes.status === 'fulfilled' && restRes.value.data.data) {
+        updateRestaurant(restRes.value.data.data);
+      }
     } catch (err: any) {
       console.error('Fetch dashboard data error:', err);
       setError('Failed to load table operational data.');
@@ -227,6 +231,14 @@ export default function AdminTablesPage() {
       setRecentBills((prev) => [bill, ...prev.filter((b) => String(b._id) !== billIdStr)]);
     };
 
+    const handleRestaurantUpdated = (updatedRestaurant?: any) => {
+      if (updatedRestaurant) {
+        updateRestaurant(updatedRestaurant);
+      } else {
+        fetchAllData();
+      }
+    };
+
     socket.on('new_order', handleNewOrder);
     socket.on('order_updated', handleOrderUpdated);
     socket.on('order_status_updated', handleOrderUpdated);
@@ -236,6 +248,7 @@ export default function AdminTablesPage() {
     socket.on('bill_payment_verifying', handleBillPaymentVerifying);
     socket.on('bill_payment_approved', handleBillPaymentApproved);
     socket.on('bill_ready', handleBillReady);
+    socket.on('restaurant_updated', handleRestaurantUpdated);
 
     return () => {
       socket.off('new_order', handleNewOrder);
@@ -247,8 +260,9 @@ export default function AdminTablesPage() {
       socket.off('bill_payment_verifying', handleBillPaymentVerifying);
       socket.off('bill_payment_approved', handleBillPaymentApproved);
       socket.off('bill_ready', handleBillReady);
+      socket.off('restaurant_updated', handleRestaurantUpdated);
     };
-  }, [socket]);
+  }, [socket, updateRestaurant]);
 
   // Form Submit for Register Table
   const handleAddTableSubmit = async (e: React.FormEvent) => {
@@ -662,31 +676,36 @@ export default function AdminTablesPage() {
         billData = response.data.bill;
       }
 
-      // Construct receipt data for thermal print
-      const receiptData: ThermalReceiptData = {
-        restaurantName: restaurant?.name || 'CafeFlow Restaurant',
-        restaurantAddress: (billData?.restaurantId as any)?.address || restaurant?.address || '',
-        restaurantContact: (billData?.restaurantId as any)?.contact || restaurant?.contact || '',
-        gstNumber: (billData?.restaurantId as any)?.gstNumber || restaurant?.gstNumber || '',
-        billNumber: billData?.billNumber || 'INV-COMPLETED',
-        date: billData?.createdAt || new Date().toISOString(),
-        tableNumber: order.tableNumber,
-        customerName: order.customerName,
-        customerPhone: order.phoneNumber,
-        items: order.items.map((i) => ({
-          name: i.name,
-          quantity: i.quantity,
-          price: i.price,
-          customizations: i.customizations,
-          specialInstructions: i.specialInstructions,
-        })),
-        subtotal: order.subtotal || billData?.subtotal || 0,
-        tax: order.tax || billData?.tax || 0,
-        taxRate: billData?.taxRate !== undefined && billData?.taxRate !== null ? Number(billData.taxRate) : (restaurant?.taxRate !== undefined && restaurant?.taxRate !== null ? Number(restaurant.taxRate) : 5),
-        totalAmount: order.totalAmount || billData?.totalAmount || 0,
-        paymentStatus: billData?.paymentStatus || 'paid',
-        paymentMethod: billData?.paymentMethod || 'cash',
-      };
+        const activeTaxRate = billData?.taxRate !== undefined && billData?.taxRate !== null
+          ? Number(billData.taxRate)
+          : (restaurant?.taxRate !== undefined && restaurant?.taxRate !== null ? Number(restaurant.taxRate) : 5);
+        const activeTax = activeTaxRate === 0 ? 0 : (billData?.tax !== undefined ? billData.tax : (order.tax || 0));
+        const activeTotal = activeTaxRate === 0 ? (order.subtotal || billData?.subtotal || 0) : (billData?.totalAmount || order.totalAmount || 0);
+
+        const receiptData: ThermalReceiptData = {
+          restaurantName: restaurant?.name || 'CafeFlow Restaurant',
+          restaurantAddress: (billData?.restaurantId as any)?.address || restaurant?.address || '',
+          restaurantContact: (billData?.restaurantId as any)?.contact || restaurant?.contact || '',
+          gstNumber: (billData?.restaurantId as any)?.gstNumber || restaurant?.gstNumber || '',
+          billNumber: billData?.billNumber || 'INV-COMPLETED',
+          date: billData?.createdAt || new Date().toISOString(),
+          tableNumber: order.tableNumber,
+          customerName: order.customerName,
+          customerPhone: order.phoneNumber,
+          items: order.items.map((i) => ({
+            name: i.name,
+            quantity: i.quantity,
+            price: i.price,
+            customizations: i.customizations,
+            specialInstructions: i.specialInstructions,
+          })),
+          subtotal: order.subtotal || billData?.subtotal || 0,
+          tax: activeTax,
+          taxRate: activeTaxRate,
+          totalAmount: activeTotal,
+          paymentStatus: billData?.paymentStatus || 'paid',
+          paymentMethod: billData?.paymentMethod || 'cash',
+        };
 
       // Trigger thermal printing engine safely (print error will not revert DB completion)
       try {

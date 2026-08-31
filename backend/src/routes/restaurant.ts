@@ -112,6 +112,12 @@ router.patch('/my-restaurant', protect, restrictTo('restaurant_admin'), async (r
       return res.status(404).json({ success: false, message: 'Restaurant not found.' });
     }
 
+    const io = req.app.get('io');
+    if (io) {
+      io.to(req.user.restaurantId.toString()).emit('restaurant_updated', restaurant);
+      console.log(`[Socket] Dispatched restaurant_updated event for: ${req.user.restaurantId}`);
+    }
+
     return res.json({ success: true, message: 'Restaurant settings updated.', data: restaurant });
   } catch (error: any) {
     return res.status(500).json({ success: false, message: 'Failed to update restaurant settings.', error: error.message });

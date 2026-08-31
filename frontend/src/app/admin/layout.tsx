@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
+import api from '../../lib/axios';
 import { useAuthStore } from '../../store/authStore';
 import ThemeToggle from '../../components/ThemeToggle';
 import { 
@@ -13,7 +14,7 @@ import Link from 'next/link';
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { user, token, clearAuth } = useAuthStore();
+  const { user, token, clearAuth, updateRestaurant } = useAuthStore();
   
   const [mounted, setMounted] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -23,8 +24,22 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     // Secure guard: check if authenticated and holding admin privilege
     if (!token || !user || user.role !== 'restaurant_admin') {
       router.push('/login');
+      return;
     }
-  }, [token, user, router]);
+
+    // Always ensure fresh restaurant settings from backend
+    const syncRestaurant = async () => {
+      try {
+        const res = await api.get('/restaurants/my-restaurant');
+        if (res.data.success) {
+          updateRestaurant(res.data.data);
+        }
+      } catch (e) {
+        console.error('Failed to sync restaurant in layout:', e);
+      }
+    };
+    syncRestaurant();
+  }, [token, user, router, updateRestaurant]);
 
   const handleLogout = () => {
     clearAuth();
