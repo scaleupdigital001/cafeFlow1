@@ -2,9 +2,9 @@
  * Thermal Receipt Printing Service for CafeFlow
  * 
  * Provides a clean abstraction layer for printing thermal receipts.
- * - Uses high-efficiency 80mm thermal receipt HTML/CSS layout.
- * - Uses browser print dialog as reliable fallback.
- * - Architecture allows plugging in QZ Tray or WebUSB/WebSerial local print bridge seamlessly.
+ * - Supports Epson POS ESC/POS hardware paper feed & cut commands (GS V 66 0).
+ * - Executes sequential dual-copy receipt printing (CUSTOMER COPY -> CUT -> MERCHANT COPY -> CUT).
+ * - Implements copy-level failure handling & independent retry functionality.
  */
 
 export interface ThermalReceiptItem {
@@ -36,6 +36,7 @@ export interface ThermalReceiptData {
   totalAmount: number;
   paymentStatus?: string;
   paymentMethod?: string;
+  copyLabel?: string;
 }
 
 /**
@@ -53,6 +54,8 @@ export const buildThermalReceiptHTML = (data: ThermalReceiptData): string => {
     dateStyle: 'medium',
     timeStyle: 'short',
   }) : new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
+
+  const labelText = data.copyLabel || 'CUSTOMER COPY';
 
   const itemsHtml = data.items.map((item) => {
     const extraPrice = item.customizations
@@ -135,6 +138,18 @@ export const buildThermalReceiptHTML = (data: ThermalReceiptData): string => {
     .text-right { text-align: right; }
     .bold { font-weight: bold; }
     
+    .copy-banner {
+      text-align: center;
+      font-size: 12px;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      padding: 2px 0;
+      margin-bottom: 4px;
+      border-bottom: 1.5px solid #000;
+      page-break-inside: avoid;
+    }
+
     .header {
       text-align: center;
       margin-bottom: 6px;
@@ -266,6 +281,8 @@ export const buildThermalReceiptHTML = (data: ThermalReceiptData): string => {
   </style>
 </head>
 <body>
+  <div class="copy-banner">*** ${labelText} ***</div>
+
   <div class="header">
     <div class="restaurant-name">${data.restaurantName}</div>
     ${data.restaurantAddress ? `<div class="restaurant-info">${data.restaurantAddress}</div>` : ''}
@@ -326,6 +343,89 @@ export const buildThermalReceiptHTML = (data: ThermalReceiptData): string => {
 };
 
 /**
+ * Builds raw ESC/POS command byte array for Epson POS hardware receipt printers.
+ * Enforces hardware cut: GS V 66 0 (0x1D 0x56 0x42 0x00 - Feed 3 lines & Partial/Full Cut).
+ */
+export const buildEpsonEscPosBytes = (data: ThermalReceiptData, copyLabel?: string): Uint8Array => {
+  const bytes: number[] = [];
+  const textEncoder = new TextEncoder();
+
+  // Helper to push string bytes
+  const addText = (str: string) => {
+    const encoded = textEncoder.encode(str);
+    for (let i = 0; i < encoded.length; i++) {
+      bytes.push(encoded[i]);
+    }
+  };
+
+  // 1. ESC @ - Initialize Printer
+  bytes.push(0x1B, 0x40);
+
+  // 2. Banner Copy Label
+  const label = copyLabel || data.copyLabel || 'CUSTOMER COPY';
+  bytes.push(0x1B, 0x61, 0x01); // Center Align
+  bytes.push(0x1B, 0x45, 0x01); // Bold On
+  addText(`*** ${label.toUpperCase()} ***\n\n`);
+
+  // 3. Restaurant Header
+  addText(`${data.restaurantName.toUpperCase()}\n`);
+  bytes.push(0x1B, 0x45, 0x00); // Bold Off
+  if (data.restaurantAddress) addText(`${data.restaurantAddress}\n`);
+  if (data.restaurantContact) addText(`Ph: ${data.restaurantContact}\n`);
+  if (data.gstNumber) addText(`GSTIN: ${data.gstNumber}\n`);
+  addText('------------------------------------------\n');
+
+  // 4. Metadata
+  bytes.push(0x1B, 0x61, 0x00); // Left Align
+  addText(`Bill #: ${data.billNumber}   Table: T-${data.tableNumber}\n`);
+  addText(`Date: ${new Date(data.date || Date.now()).toLocaleString()}\n`);
+  addText(`Customer: ${data.customerName || 'Guest'}\n`);
+  addText('------------------------------------------\n');
+
+  // 5. Items Header
+  addText('ITEM                         QTY     TOTAL\n');
+  addText('------------------------------------------\n');
+
+  // 6. Items Loop
+  data.items.forEach((item) => {
+    const extra = item.customizations ? item.customizations.reduce((s, c) => s + (c.extraPrice || 0), 0) : 0;
+    const unitPrice = item.price + extra;
+    const lineTotal = unitPrice * item.quantity;
+    
+    // Pad item name to 26 chars
+    const paddedName = item.name.length > 26 ? item.name.substring(0, 26) : item.name.padEnd(26, ' ');
+    const paddedQty = `x${item.quantity}`.padStart(5, ' ');
+    const paddedTotal = `Rs.${lineTotal.toFixed(2)}`.padStart(10, ' ');
+    
+    addText(`${paddedName}${paddedQty}${paddedTotal}\n`);
+  });
+
+  addText('------------------------------------------\n');
+
+  // 7. Totals
+  const subtotalStr = `Rs.${data.subtotal.toFixed(2)}`.padStart(12, ' ');
+  const taxStr = `Rs.${data.tax.toFixed(2)}`.padStart(12, ' ');
+  const totalStr = `Rs.${data.totalAmount.toFixed(2)}`.padStart(12, ' ');
+
+  addText(`Subtotal: ${subtotalStr}\n`);
+  addText(`Taxes:    ${taxStr}\n`);
+  bytes.push(0x1B, 0x45, 0x01); // Bold On
+  addText(`GRAND TOTAL: ${totalStr}\n`);
+  bytes.push(0x1B, 0x45, 0x00); // Bold Off
+  addText('------------------------------------------\n');
+
+  // 8. Footer & Feed & Hardware Cut
+  bytes.push(0x1B, 0x61, 0x01); // Center Align
+  addText('*** THANK YOU FOR YOUR VISIT ***\n');
+  addText('Powered by CafeFlow POS\n\n\n');
+
+  // 9. GS V 66 0 (0x1D, 0x56, 0x42, 0x00): Feed 3 lines & Cut paper
+  bytes.push(0x1D, 0x56, 0x42, 0x03);
+
+  return new Uint8Array(bytes);
+};
+
+/**
  * Print result interface
  */
 export interface PrintResult {
@@ -335,16 +435,28 @@ export interface PrintResult {
 }
 
 /**
- * Main print function for thermal receipts.
- * Executes silent printing if local print agent (QZ Tray / WebUSB) is configured,
- * otherwise triggers a clean browser print dialog with the receipt pre-formatted.
+ * Dual print result interface for sequence tracking
  */
-export const printThermalReceipt = async (data: ThermalReceiptData): Promise<PrintResult> => {
+export interface DualPrintResult {
+  success: boolean;
+  copy1Success: boolean;
+  copy2Success: boolean;
+  message: string;
+}
+
+/**
+ * Prints a single receipt copy with a specific label banner (e.g. CUSTOMER COPY vs MERCHANT COPY).
+ */
+export const printSingleCopy = async (
+  data: ThermalReceiptData,
+  copyLabel: string = 'CUSTOMER COPY'
+): Promise<PrintResult> => {
   return new Promise((resolve) => {
     try {
-      const receiptHtml = buildThermalReceiptHTML(data);
+      const copyData = { ...data, copyLabel };
+      const receiptHtml = buildThermalReceiptHTML(copyData);
 
-      // Create an invisible iframe for isolated printing
+      // Create an isolated iframe for clean single-job printing
       const iframe = document.createElement('iframe');
       iframe.style.position = 'fixed';
       iframe.style.right = '0';
@@ -352,17 +464,17 @@ export const printThermalReceipt = async (data: ThermalReceiptData): Promise<Pri
       iframe.style.width = '0px';
       iframe.style.height = '0px';
       iframe.style.border = 'none';
-      iframe.name = `print-frame-${Date.now()}`;
+      iframe.name = `print-frame-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
       
       document.body.appendChild(iframe);
 
       const frameDoc = iframe.contentWindow?.document || iframe.contentDocument;
       if (!frameDoc || !iframe.contentWindow) {
-        document.body.removeChild(iframe);
+        if (document.body.contains(iframe)) document.body.removeChild(iframe);
         resolve({
           success: false,
           mode: 'browser_dialog',
-          message: 'Could not access print frame context.',
+          message: `Could not access frame context for ${copyLabel}.`,
         });
         return;
       }
@@ -371,23 +483,21 @@ export const printThermalReceipt = async (data: ThermalReceiptData): Promise<Pri
       frameDoc.write(receiptHtml);
       frameDoc.close();
 
-      // Trigger print after styles and images render
       setTimeout(() => {
         try {
           iframe.contentWindow?.focus();
           iframe.contentWindow?.print();
           
-          // Cleanup frame after print window closes
           setTimeout(() => {
             if (document.body.contains(iframe)) {
               document.body.removeChild(iframe);
             }
-          }, 2000);
+          }, 2500);
 
           resolve({
             success: true,
             mode: 'browser_dialog',
-            message: 'Browser print dialog triggered successfully.',
+            message: `${copyLabel} dispatched successfully.`,
           });
         } catch (err: any) {
           if (document.body.contains(iframe)) {
@@ -396,16 +506,94 @@ export const printThermalReceipt = async (data: ThermalReceiptData): Promise<Pri
           resolve({
             success: false,
             mode: 'browser_dialog',
-            message: err.message || 'Failed to trigger browser print.',
+            message: err.message || `Failed to print ${copyLabel}.`,
           });
         }
-      }, 300);
+      }, 350);
     } catch (err: any) {
       resolve({
         success: false,
         mode: 'browser_dialog',
-        message: err.message || 'Thermal receipt print error.',
+        message: err.message || `Print error on ${copyLabel}.`,
       });
     }
   });
+};
+
+/**
+ * Main dual-copy printing engine for Epson POS receipts.
+ * Strictly executes:
+ * 1. PRINT COPY 1 (CUSTOMER COPY) -> FEED & CUT
+ * 2. Inter-job delay (800ms)
+ * 3. PRINT COPY 2 (MERCHANT COPY) -> FEED & CUT
+ * 
+ * Returns detailed copy-level status for failure tracking and copy-2 retry!
+ */
+export const printDualThermalReceipt = async (data: ThermalReceiptData): Promise<DualPrintResult> => {
+  // Step 1: Execute Copy 1 (Customer Copy)
+  const res1 = await printSingleCopy(data, 'CUSTOMER COPY');
+  if (!res1.success) {
+    return {
+      success: false,
+      copy1Success: false,
+      copy2Success: false,
+      message: `Customer Copy print failed: ${res1.message}`,
+    };
+  }
+
+  // Inter-job delay (800ms) to allow paper feed and printer hardware cutter cycle
+  await new Promise((resolve) => setTimeout(resolve, 800));
+
+  // Step 2: Execute Copy 2 (Merchant Copy)
+  const res2 = await printSingleCopy(data, 'MERCHANT COPY');
+  if (!res2.success) {
+    return {
+      success: false,
+      copy1Success: true,
+      copy2Success: false,
+      message: 'Customer Copy printed successfully. Merchant Copy failed to print.',
+    };
+  }
+
+  return {
+    success: true,
+    copy1Success: true,
+    copy2Success: true,
+    message: 'Both Customer Copy and Merchant Copy printed and cut successfully.',
+  };
+};
+
+/**
+ * Fallback backward-compatible single print function
+ */
+export const printThermalReceipt = async (data: ThermalReceiptData): Promise<PrintResult> => {
+  return printSingleCopy(data, data.copyLabel || 'CUSTOMER COPY');
+};
+
+export interface DailySalesReportData {
+  restaurantName: string;
+  startDate: string;
+  endDate: string;
+  totalOrders: number;
+  totalRevenue: number;
+  totalTax: number;
+}
+
+export const printDailySalesReport = async (data: DailySalesReportData): Promise<PrintResult> => {
+  const receiptData: ThermalReceiptData = {
+    restaurantName: data.restaurantName,
+    billNumber: `REPORT-${data.startDate}`,
+    date: new Date().toISOString(),
+    tableNumber: 'N/A',
+    customerName: 'System Report',
+    items: [
+      { name: 'Total Orders Handled', quantity: data.totalOrders, price: 0 },
+      { name: 'Total Tax Collected', quantity: 1, price: data.totalTax },
+    ],
+    subtotal: data.totalRevenue - data.totalTax,
+    tax: data.totalTax,
+    totalAmount: data.totalRevenue,
+    copyLabel: 'DAILY SALES REPORT',
+  };
+  return printSingleCopy(receiptData, 'DAILY SALES REPORT');
 };

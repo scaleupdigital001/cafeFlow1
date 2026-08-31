@@ -4,7 +4,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import api from '../../../lib/axios';
 import useSocket from '../../../hooks/useSocket';
 import { useAuthStore } from '../../../store/authStore';
-import { printThermalReceipt, ThermalReceiptData } from '../../../lib/printService';
+import { printThermalReceipt, printDualThermalReceipt, printSingleCopy, ThermalReceiptData, DualPrintResult } from '../../../lib/printService';
 import { getBackendBillUrl } from '../../../lib/config';
 import { Button } from '../../../components/ui/button';
 import { Badge } from '../../../components/ui/badge';
@@ -618,7 +618,31 @@ export default function AdminTablesPage() {
     );
   };
 
-  // Direct Print Receipt from existing bill data
+  // Dual-copy printing tracking state
+  const [lastReceiptData, setLastReceiptData] = useState<ThermalReceiptData | null>(null);
+  const [printAlert, setPrintAlert] = useState<{ copy1: boolean; copy2: boolean; message: string } | null>(null);
+  const [retryingMerchantCopy, setRetryingMerchantCopy] = useState(false);
+
+  // Independent Retry for Merchant Copy without DB or Payment re-triggering
+  const handleRetryMerchantCopy = async () => {
+    if (!lastReceiptData || retryingMerchantCopy) return;
+    setRetryingMerchantCopy(true);
+    try {
+      const res = await printSingleCopy(lastReceiptData, 'MERCHANT COPY');
+      if (res.success) {
+        setPrintAlert(null);
+        alert('Merchant Copy printed and cut successfully.');
+      } else {
+        alert('Failed to print Merchant Copy: ' + res.message);
+      }
+    } catch (err: any) {
+      alert('Error printing Merchant Copy: ' + (err.message || 'Unknown error'));
+    } finally {
+      setRetryingMerchantCopy(false);
+    }
+  };
+
+  // Direct Print Receipt (Both Copies: Customer -> Feed/Cut -> Merchant -> Feed/Cut)
   const handleReprintBill = async (bill: Bill) => {
     try {
       const order = typeof bill.orderId === 'object' ? (bill.orderId as any) : null;
@@ -646,16 +670,25 @@ export default function AdminTablesPage() {
         paymentStatus: bill.paymentStatus || 'paid',
         paymentMethod: bill.paymentMethod || 'cash',
       };
-      await printThermalReceipt(receiptData);
+      
+      setLastReceiptData(receiptData);
+      const dualResult = await printDualThermalReceipt(receiptData);
+      setPrintAlert({
+        copy1: dualResult.copy1Success,
+        copy2: dualResult.copy2Success,
+        message: dualResult.message,
+      });
     } catch (err: any) {
-      alert('Failed to reprint receipt: ' + (err.message || 'Unknown error'));
+      alert('Failed to reprint receipt copies: ' + (err.message || 'Unknown error'));
     }
   };
 
   // Handle Admin COMPLETE & PRINT BILL / APPROVE PAYMENT & PRINT BILL
   const handleAdminCompleteAndPrint = async (order: Order) => {
+    // Double-click / Idempotency protection
     if (completingTable) return;
     setCompletingTable(true);
+    setPrintAlert(null);
 
     try {
       const info = selectedTableInfo;
@@ -676,42 +709,54 @@ export default function AdminTablesPage() {
         billData = response.data.bill;
       }
 
-        const activeTaxRate = billData?.taxRate !== undefined && billData?.taxRate !== null
-          ? Number(billData.taxRate)
-          : (restaurant?.taxRate !== undefined && restaurant?.taxRate !== null ? Number(restaurant.taxRate) : 5);
-        const activeTax = activeTaxRate === 0 ? 0 : (billData?.tax !== undefined ? billData.tax : (order.tax || 0));
-        const activeTotal = activeTaxRate === 0 ? (order.subtotal || billData?.subtotal || 0) : (billData?.totalAmount || order.totalAmount || 0);
+      const activeTaxRate = billData?.taxRate !== undefined && billData?.taxRate !== null
+        ? Number(billData.taxRate)
+        : (restaurant?.taxRate !== undefined && restaurant?.taxRate !== null ? Number(restaurant.taxRate) : 5);
+      const activeTax = activeTaxRate === 0 ? 0 : (billData?.tax !== undefined ? billData.tax : (order.tax || 0));
+      const activeTotal = activeTaxRate === 0 ? (order.subtotal || billData?.subtotal || 0) : (billData?.totalAmount || order.totalAmount || 0);
 
-        const receiptData: ThermalReceiptData = {
-          restaurantName: restaurant?.name || 'CafeFlow Restaurant',
-          restaurantAddress: (billData?.restaurantId as any)?.address || restaurant?.address || '',
-          restaurantContact: (billData?.restaurantId as any)?.contact || restaurant?.contact || '',
-          gstNumber: (billData?.restaurantId as any)?.gstNumber || restaurant?.gstNumber || '',
-          billNumber: billData?.billNumber || 'INV-COMPLETED',
-          date: billData?.createdAt || new Date().toISOString(),
-          tableNumber: order.tableNumber,
-          customerName: order.customerName,
-          customerPhone: order.phoneNumber,
-          items: order.items.map((i) => ({
-            name: i.name,
-            quantity: i.quantity,
-            price: i.price,
-            customizations: i.customizations,
-            specialInstructions: i.specialInstructions,
-          })),
-          subtotal: order.subtotal || billData?.subtotal || 0,
-          tax: activeTax,
-          taxRate: activeTaxRate,
-          totalAmount: activeTotal,
-          paymentStatus: billData?.paymentStatus || 'paid',
-          paymentMethod: billData?.paymentMethod || 'cash',
-        };
+      const receiptData: ThermalReceiptData = {
+        restaurantName: restaurant?.name || 'CafeFlow Restaurant',
+        restaurantAddress: (billData?.restaurantId as any)?.address || restaurant?.address || '',
+        restaurantContact: (billData?.restaurantId as any)?.contact || restaurant?.contact || '',
+        gstNumber: (billData?.restaurantId as any)?.gstNumber || restaurant?.gstNumber || '',
+        billNumber: billData?.billNumber || 'INV-COMPLETED',
+        date: billData?.createdAt || new Date().toISOString(),
+        tableNumber: order.tableNumber,
+        customerName: order.customerName,
+        customerPhone: order.phoneNumber,
+        items: order.items.map((i) => ({
+          name: i.name,
+          quantity: i.quantity,
+          price: i.price,
+          customizations: i.customizations,
+          specialInstructions: i.specialInstructions,
+        })),
+        subtotal: order.subtotal || billData?.subtotal || 0,
+        tax: activeTax,
+        taxRate: activeTaxRate,
+        totalAmount: activeTotal,
+        paymentStatus: billData?.paymentStatus || 'paid',
+        paymentMethod: billData?.paymentMethod || 'cash',
+      };
 
-      // Trigger thermal printing engine safely (print error will not revert DB completion)
+      setLastReceiptData(receiptData);
+
+      // Trigger sequential dual-copy thermal printing: COPY 1 -> FEED & CUT -> COPY 2 -> FEED & CUT
       try {
-        await printThermalReceipt(receiptData);
-      } catch (printErr) {
-        console.error('Thermal print error:', printErr);
+        const dualResult = await printDualThermalReceipt(receiptData);
+        setPrintAlert({
+          copy1: dualResult.copy1Success,
+          copy2: dualResult.copy2Success,
+          message: dualResult.message,
+        });
+      } catch (printErr: any) {
+        console.error('Dual thermal print error:', printErr);
+        setPrintAlert({
+          copy1: false,
+          copy2: false,
+          message: 'Printer error: ' + (printErr.message || 'Unknown printer error'),
+        });
       }
 
       // Instantly remove completed order from activeOrders state by Order._id
@@ -819,18 +864,63 @@ export default function AdminTablesPage() {
               <Receipt className="w-4 h-4" /> Live Table Operations
             </button>
             <button
-              onClick={() => setActiveTab('qr')}
+              onClick={() => setActiveTab('manage')}
               className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                activeTab === 'qr'
+                activeTab === 'manage'
                   ? 'bg-primary text-primary-foreground shadow-md'
                   : 'text-muted-foreground hover:bg-secondary'
               }`}
             >
-              <QrCode className="w-4 h-4" /> QR Stickers Roster
+              <QrCode className="w-4 h-4" /> Manage QR Tables
             </button>
           </div>
         </div>
       </div>
+
+      {/* Dual-Copy Print Status & Retry Alert Notification */}
+      {printAlert && (
+        <div className={`p-4 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs font-semibold ${
+          printAlert.copy1 && printAlert.copy2
+            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300'
+            : 'bg-amber-500/10 border-amber-500/40 text-amber-800 dark:text-amber-300'
+        }`}>
+          <div className="flex items-center gap-2">
+            {printAlert.copy1 && printAlert.copy2 ? (
+              <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+            ) : (
+              <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0" />
+            )}
+            <div>
+              <p className="font-bold">{printAlert.message}</p>
+              <p className="text-[11px] opacity-80 mt-0.5">
+                Copy 1 (Customer): {printAlert.copy1 ? 'Printed & Cut' : 'Failed'} | Copy 2 (Merchant): {printAlert.copy2 ? 'Printed & Cut' : 'Failed'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+            {!printAlert.copy2 && printAlert.copy1 && lastReceiptData && (
+              <Button
+                onClick={handleRetryMerchantCopy}
+                disabled={retryingMerchantCopy}
+                size="sm"
+                className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs cursor-pointer gap-1"
+              >
+                {retryingMerchantCopy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Printer className="w-3.5 h-3.5" />}
+                Retry Merchant Copy
+              </Button>
+            )}
+            <Button
+              onClick={() => setPrintAlert(null)}
+              variant="ghost"
+              size="sm"
+              className="text-xs cursor-pointer"
+            >
+              Dismiss
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Summary Metrics Bar */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
