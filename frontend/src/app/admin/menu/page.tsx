@@ -41,6 +41,8 @@ export default function AdminMenuPage() {
   // Form modals state
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingDish, setEditingDish] = useState<Dish | null>(null);
+  const [formSaving, setFormSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   // Search & Filter
   const [searchQuery, setSearchQuery] = useState('');
@@ -63,14 +65,20 @@ export default function AdminMenuPage() {
   const [tempOptionPrice, setTempOptionPrice] = useState('');
   const [tempOptionsList, setTempOptionsList] = useState<CustomizationOption[]>([]);
 
-  const visibleCategories = useMemo(() => {
-    const defaultCategories = ['Coffee', 'Tea', 'Mocktails', 'Snacks', 'Breakfast', 'Lunch', 'Dinner', 'Desserts'];
-    const activeCategories = Array.from(new Set(dishes.map((d) => d.category))).filter(Boolean);
-    const categoriesList = Array.from(new Set([...defaultCategories, ...activeCategories]));
-    return categoriesList.filter((cat) => dishes.some((d) => d.category === cat));
-  }, [dishes]);
+  const defaultCategories = useMemo(() => [
+    'Coffee', 'Tea', 'Mocktails', 'Beverages', 'Snacks', 'Breakfast', 'Lunch', 'Dinner', 'Desserts', 'Bakery'
+  ], []);
 
-  // Automatically reset category filter to 'All' if selected category becomes empty (e.g. last item deleted/moved)
+  const allAvailableCategories = useMemo(() => {
+    const activeCategories = Array.from(new Set(dishes.map((d) => d.category))).filter(Boolean);
+    return Array.from(new Set([...defaultCategories, ...activeCategories]));
+  }, [dishes, defaultCategories]);
+
+  const visibleCategories = useMemo(() => {
+    return allAvailableCategories.filter((cat) => dishes.some((d) => d.category === cat));
+  }, [dishes, allAvailableCategories]);
+
+  // Automatically reset category filter to 'All' if selected category becomes empty
   useEffect(() => {
     if (categoryFilter !== 'All' && !visibleCategories.includes(categoryFilter)) {
       setCategoryFilter('All');
@@ -106,6 +114,7 @@ export default function AdminMenuPage() {
     setVeg(true);
     setImage('');
     setCustomizations([]);
+    setFormError(null);
     clearTempGroup();
     setIsFormOpen(true);
   };
@@ -120,6 +129,7 @@ export default function AdminMenuPage() {
     setVeg(dish.veg);
     setImage(dish.image || '');
     setCustomizations(dish.customizations || []);
+    setFormError(null);
     clearTempGroup();
     setIsFormOpen(true);
   };
@@ -134,10 +144,11 @@ export default function AdminMenuPage() {
 
   // Add options to custom builder lists
   const handleAddTempOption = () => {
-    if (!tempOptionName || !tempOptionPrice) return;
+    if (!tempOptionName.trim()) return;
+    const optPrice = parseFloat(tempOptionPrice) || 0;
     setTempOptionsList((prev) => [
       ...prev,
-      { name: tempOptionName.trim(), extraPrice: Number(tempOptionPrice) },
+      { name: tempOptionName.trim(), extraPrice: optPrice },
     ]);
     setTempOptionName('');
     setTempOptionPrice('');
@@ -145,7 +156,7 @@ export default function AdminMenuPage() {
 
   // Save the customization group to form array
   const handleSaveCustomizationGroup = () => {
-    if (!tempGroupName || tempOptionsList.length === 0) return;
+    if (!tempGroupName.trim() || tempOptionsList.length === 0) return;
     const newGroup: CustomizationGroup = {
       name: tempGroupName.trim(),
       type: tempGroupType,
@@ -160,38 +171,55 @@ export default function AdminMenuPage() {
   };
 
   const handleToggleAvailability = async (dishId: string) => {
+    // Optimistic UI update
+    setDishes((prev) =>
+      prev.map((d) => (d._id === dishId ? { ...d, available: !d.available } : d))
+    );
+
     try {
-      const res = await api.patch(`/dishes/${dishId}/toggle-availability`);
-      if (res.data.success) {
-        setDishes((prev) =>
-          prev.map((d) => (d._id === dishId ? { ...d, available: !d.available } : d))
-        );
-      }
+      await api.patch(`/dishes/${dishId}/toggle-availability`);
     } catch (err: any) {
+      loadMenu();
       alert('Failed to toggle availability.');
     }
   };
 
   const handleDeleteDish = async (dishId: string) => {
     if (!window.confirm('Are you sure you want to delete this menu dish permanently?')) return;
+    // Optimistic delete
+    setDishes((prev) => prev.filter((d) => d._id !== dishId));
+
     try {
-      const res = await api.delete(`/dishes/${dishId}`);
-      if (res.data.success) {
-        setDishes((prev) => prev.filter((d) => d._id !== dishId));
-      }
+      await api.delete(`/dishes/${dishId}`);
     } catch (err: any) {
+      loadMenu();
       alert('Failed to delete dish.');
     }
   };
 
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError(null);
+
     const finalCategory = category === 'custom_add_new' ? customCategory.trim() : category;
-    if (!name || !price || !finalCategory) return;
+    if (!name.trim()) {
+      setFormError('Please enter a dish name.');
+      return;
+    }
+    if (!price || isNaN(Number(price)) || Number(price) < 0) {
+      setFormError('Please enter a valid price.');
+      return;
+    }
+    if (!finalCategory) {
+      setFormError('Please select or enter a category name.');
+      return;
+    }
+
+    setFormSaving(true);
 
     const payload = {
-      name,
-      description,
+      name: name.trim(),
+      description: description.trim(),
       price: Number(price),
       category: finalCategory,
       veg,
@@ -204,19 +232,21 @@ export default function AdminMenuPage() {
         // Edit Mode
         const res = await api.patch(`/dishes/${editingDish._id}`, payload);
         if (res.data.success) {
-          loadMenu();
+          setDishes((prev) => prev.map((d) => (d._id === editingDish._id ? res.data.data : d)));
           setIsFormOpen(false);
         }
       } else {
         // Add Mode
         const res = await api.post('/dishes', payload);
         if (res.data.success) {
-          loadMenu();
+          setDishes((prev) => [res.data.data, ...prev]);
           setIsFormOpen(false);
         }
       }
     } catch (err: any) {
-      alert(err.response?.data?.message || 'Failed to save menu dish.');
+      setFormError(err.response?.data?.message || 'Failed to save menu dish.');
+    } finally {
+      setFormSaving(false);
     }
   };
 
@@ -386,9 +416,15 @@ export default function AdminMenuPage() {
                 onClick={() => setIsFormOpen(false)}
                 className="p-1 rounded-full bg-secondary text-muted-foreground hover:text-foreground cursor-pointer"
               >
-                <XCircle className="w-5 h-5" />
+                <X className="w-5 h-5" />
               </button>
             </div>
+
+            {formError && (
+              <div className="mx-6 mt-4 p-3 bg-destructive/10 border border-destructive/20 text-destructive text-xs font-semibold rounded-xl">
+                {formError}
+              </div>
+            )}
 
             <form onSubmit={handleFormSubmit} className="flex-1 overflow-y-auto p-6 space-y-5 text-sm">
               <div className="grid grid-cols-2 gap-4">
@@ -423,7 +459,7 @@ export default function AdminMenuPage() {
                     onChange={(e) => setCategory(e.target.value)}
                     className="w-full text-xs bg-secondary/30 text-foreground border border-border rounded-xl px-3 py-2.5 outline-none focus:ring-2 focus:ring-primary focus:bg-background transition-all cursor-pointer"
                   >
-                    {categoriesList.map((c) => (
+                    {allAvailableCategories.map((c) => (
                       <option key={c} value={c}>{c}</option>
                     ))}
                     <option value="custom_add_new">+ Add New Category</option>
@@ -593,11 +629,17 @@ export default function AdminMenuPage() {
               </div>
 
               <div className="p-4 border-t border-border flex items-center justify-end gap-3 bg-secondary/10">
-                <Button type="button" variant="outline" onClick={() => setIsFormOpen(false)} className="cursor-pointer font-bold">
+                <Button type="button" variant="outline" onClick={() => setIsFormOpen(false)} className="cursor-pointer font-bold" disabled={formSaving}>
                   Cancel
                 </Button>
-                <Button type="submit" className="cursor-pointer font-bold">
-                  {editingDish ? 'Update Dish' : 'Create Dish'}
+                <Button type="submit" className="cursor-pointer font-bold gap-1.5" disabled={formSaving}>
+                  {formSaving ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" /> Saving...
+                    </>
+                  ) : (
+                    <>{editingDish ? 'Update Dish' : 'Create Dish'}</>
+                  )}
                 </Button>
               </div>
             </form>
