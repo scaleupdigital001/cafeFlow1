@@ -453,32 +453,61 @@ export default function AdminTablesPage() {
     });
   }, [menuDishes, dishSearchQuery, dishCategoryFilter, dishVegFilter]);
 
+  // Normalize table strings for resilient key matching (e.g. "Table 1", "T-1", " 1 " -> "1")
+  const normalizeTableKey = (t: string | number | undefined | null): string => {
+    if (!t) return '';
+    return String(t).trim().toLowerCase().replace(/^(table|t)[-\s]*/i, '');
+  };
+
   // Precompute derived table information indexed by tableNumber (O(N) data passes instead of O(tables * N))
   const tableInfoMap = React.useMemo(() => {
-    // 1. Group active orders by tableNumber while preserving array order
+    // 1. Group active orders by tableNumber with resilient multi-key matching
     const ordersByTable: Record<string, Order[]> = {};
     for (const order of activeOrders) {
-      if (!ordersByTable[order.tableNumber]) {
-        ordersByTable[order.tableNumber] = [];
+      if (!order.tableNumber) continue;
+      const raw = String(order.tableNumber).trim();
+      const norm = normalizeTableKey(raw);
+      const keys = new Set([raw, norm, `Table ${norm}`, `Table ${raw}`]);
+
+      for (const k of keys) {
+        if (!ordersByTable[k]) ordersByTable[k] = [];
+        if (!ordersByTable[k].some((o) => String(o._id) === String(order._id))) {
+          ordersByTable[k].push(order);
+        }
       }
-      ordersByTable[order.tableNumber].push(order);
     }
 
     // 2. Map pending bill waiter requests by tableNumber
     const pendingBillRequests = new Set<string>();
     for (const req of waiterRequests) {
       if (req.type === 'request_bill' && req.status === 'pending') {
-        pendingBillRequests.add(req.tableNumber);
+        const raw = String(req.tableNumber).trim();
+        const norm = normalizeTableKey(raw);
+        pendingBillRequests.add(raw);
+        pendingBillRequests.add(norm);
+        pendingBillRequests.add(`Table ${norm}`);
       }
     }
 
-    // 3. Map pending/verifying bills by tableNumber
+    // 3. Map pending/verifying bills and last completed bills by tableNumber
     const billsByTable: Record<string, Bill> = {};
+    const lastCompletedBillsByTable: Record<string, Bill> = {};
+
     for (const bill of recentBills) {
+      const tableNum = bill.tableNumber || (bill.orderId as any)?.tableNumber;
+      if (!tableNum) continue;
+
+      const raw = String(tableNum).trim();
+      const norm = normalizeTableKey(raw);
+      const keys = [raw, norm, `Table ${norm}`];
+
       if (bill.paymentStatus === 'pending' || bill.paymentStatus === 'verifying') {
-        const tableNum = bill.tableNumber || (bill.orderId as any)?.tableNumber;
-        if (tableNum && !billsByTable[tableNum]) {
-          billsByTable[tableNum] = bill;
+        for (const k of keys) {
+          if (!billsByTable[k]) billsByTable[k] = bill;
+        }
+      } else if (bill.paymentStatus === 'paid') {
+        for (const k of keys) {
+          if (!lastCompletedBillsByTable[k]) lastCompletedBillsByTable[k] = bill;
         }
       }
     }
@@ -493,6 +522,7 @@ export default function AdminTablesPage() {
         hasExplicitBillRequest: boolean;
         isEligibleForBilling: boolean;
         matchingBill: Bill | undefined;
+        lastCompletedBill: Bill | undefined;
         totalItems: number;
         totalAmount: number;
       }
@@ -500,14 +530,18 @@ export default function AdminTablesPage() {
 
     for (const t of tables) {
       const tableNum = t.tableNumber;
-      const tableOrders = ordersByTable[tableNum] || [];
+      const norm = normalizeTableKey(tableNum);
+      const tableOrders = ordersByTable[tableNum] || ordersByTable[norm] || [];
       const hasOrder = tableOrders.length > 0;
       const latestOrder = hasOrder ? tableOrders[0] : null;
 
       const hasExplicitBillRequest =
-        (latestOrder as any)?.billRequested === true || pendingBillRequests.has(tableNum);
+        (latestOrder as any)?.billRequested === true ||
+        pendingBillRequests.has(tableNum) ||
+        pendingBillRequests.has(norm);
 
-      const matchingBill = billsByTable[tableNum];
+      const matchingBill = billsByTable[tableNum] || billsByTable[norm];
+      const lastCompletedBill = lastCompletedBillsByTable[tableNum] || lastCompletedBillsByTable[norm];
 
       const isEligibleForBilling =
         (latestOrder as any)?.status === 'served' || hasExplicitBillRequest || Boolean(matchingBill);
@@ -530,16 +564,20 @@ export default function AdminTablesPage() {
         }
       }
 
-      map[tableNum] = {
+      const infoObj = {
         status,
         orders: tableOrders,
         latestOrder,
         hasExplicitBillRequest,
         isEligibleForBilling,
         matchingBill,
+        lastCompletedBill,
         totalItems,
         totalAmount,
       };
+
+      map[tableNum] = infoObj;
+      if (norm) map[norm] = infoObj;
     }
 
     return map;
@@ -547,18 +585,57 @@ export default function AdminTablesPage() {
 
   // Fast O(1) lookup helper
   const getTableInfo = (tableNum: string) => {
+    const raw = String(tableNum).trim();
+    const norm = normalizeTableKey(raw);
     return (
-      tableInfoMap[tableNum] || {
+      tableInfoMap[raw] ||
+      tableInfoMap[norm] ||
+      tableInfoMap[`Table ${norm}`] || {
         status: 'AVAILABLE',
         orders: [],
         latestOrder: null,
         hasExplicitBillRequest: false,
         isEligibleForBilling: false,
         matchingBill: undefined,
+        lastCompletedBill: undefined,
         totalItems: 0,
         totalAmount: 0,
       }
     );
+  };
+
+  // Direct Print Receipt from existing bill data
+  const handleReprintBill = async (bill: Bill) => {
+    try {
+      const order = typeof bill.orderId === 'object' ? (bill.orderId as any) : null;
+      const receiptData: ThermalReceiptData = {
+        restaurantName: restaurant?.name || 'CafeFlow Restaurant',
+        restaurantAddress: (bill.restaurantId as any)?.address || restaurant?.address || '',
+        restaurantContact: (bill.restaurantId as any)?.contact || restaurant?.contact || '',
+        gstNumber: (bill.restaurantId as any)?.gstNumber || restaurant?.gstNumber || '',
+        billNumber: bill.billNumber || 'INV-REPRINT',
+        date: bill.createdAt || new Date().toISOString(),
+        tableNumber: bill.tableNumber || order?.tableNumber || selectedTableNum || '1',
+        customerName: order?.customerName || 'Guest',
+        customerPhone: order?.phoneNumber || '',
+        items: (order?.items || []).map((i: any) => ({
+          name: i.name,
+          quantity: i.quantity,
+          price: i.price,
+          customizations: i.customizations,
+          specialInstructions: i.specialInstructions,
+        })),
+        subtotal: bill.subtotal || order?.subtotal || 0,
+        tax: bill.tax || order?.tax || 0,
+        taxRate: (bill as any)?.taxRate || restaurant?.taxRate || 5,
+        totalAmount: bill.totalAmount || order?.totalAmount || 0,
+        paymentStatus: bill.paymentStatus || 'paid',
+        paymentMethod: bill.paymentMethod || 'cash',
+      };
+      await printThermalReceipt(receiptData);
+    } catch (err: any) {
+      alert('Failed to reprint receipt: ' + (err.message || 'Unknown error'));
+    }
   };
 
   // Handle Admin COMPLETE & PRINT BILL / APPROVE PAYMENT & PRINT BILL
@@ -1071,12 +1148,26 @@ export default function AdminTablesPage() {
             <div className="p-6 overflow-y-auto space-y-6 text-sm flex-1">
               {/* Table status badge */}
               <div className="flex justify-between items-center bg-secondary/30 p-3 rounded-xl border border-border/50">
-                <span className="text-xs font-bold text-muted-foreground">Table Status:</span>
+                <span className="text-xs font-bold text-muted-foreground">Table Operational Status:</span>
                 <Badge
-                  variant={selectedTableInfo.status === 'BILL_REQUESTED' ? 'danger' : 'default'}
+                  variant={
+                    selectedTableInfo.status === 'BILL_REQUESTED'
+                      ? 'danger'
+                      : selectedTableInfo.status === 'SERVED'
+                      ? 'success'
+                      : selectedTableInfo.status === 'ACTIVE'
+                      ? 'default'
+                      : 'secondary'
+                  }
                   className="font-bold uppercase tracking-wider text-xs"
                 >
-                  {selectedTableInfo.status === 'BILL_REQUESTED' ? '⚠️ BILL REQUESTED' : 'ACTIVE SESSION'}
+                  {selectedTableInfo.status === 'BILL_REQUESTED'
+                    ? '⚠️ BILL REQUESTED'
+                    : selectedTableInfo.status === 'SERVED'
+                    ? '✅ SERVED / READY FOR BILLING'
+                    : selectedTableInfo.status === 'ACTIVE'
+                    ? '🟢 ACTIVE DINING SESSION'
+                    : 'TABLE AVAILABLE'}
                 </Badge>
               </div>
 
@@ -1133,57 +1224,112 @@ export default function AdminTablesPage() {
                         </div>
                         <div className="flex justify-between text-sm font-black text-foreground pt-1 border-t border-border/30">
                           <span>Total Amount:</span>
-                          <span className="text-primary">Rs. {ord.totalAmount.toFixed(2)}</span>
+                          <span className="text-primary font-extrabold">Rs. {ord.totalAmount.toFixed(2)}</span>
                         </div>
                       </div>
                     </div>
                   ))}
                 </div>
               ) : (
-                <div className="text-center py-8 text-muted-foreground text-xs">No active order data available for this table.</div>
+                <div className="space-y-4 py-4">
+                  <div className="p-6 bg-secondary/30 rounded-2xl border border-border/60 text-center space-y-3">
+                    <ShoppingBag className="w-10 h-10 text-muted-foreground/40 mx-auto" />
+                    <div>
+                      <h4 className="font-serif font-black text-sm text-foreground">
+                        Table {selectedTableNum} has no active orders
+                      </h4>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        This table is available and ready for a new dining party.
+                      </p>
+                    </div>
+
+                    <Button
+                      onClick={() => {
+                        const tNum = selectedTableNum;
+                        setSelectedTableNum(null);
+                        openManualOrderModal(tNum || undefined);
+                      }}
+                      className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold text-xs gap-1.5 cursor-pointer shadow-md"
+                    >
+                      <Plus className="w-4 h-4" /> Take New Order (POS)
+                    </Button>
+                  </div>
+
+                  {/* Last Completed Bill Reprint option if available */}
+                  {selectedTableInfo.lastCompletedBill && (
+                    <div className="p-4 bg-secondary/20 rounded-xl border border-border/50 flex items-center justify-between gap-3 text-xs">
+                      <div>
+                        <span className="font-bold text-foreground block">
+                          Last Bill: #{selectedTableInfo.lastCompletedBill.billNumber}
+                        </span>
+                        <span className="text-[11px] text-muted-foreground">
+                          Paid: {formatCurrency(selectedTableInfo.lastCompletedBill.totalAmount)}
+                        </span>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleReprintBill(selectedTableInfo.lastCompletedBill!)}
+                        className="font-bold gap-1 cursor-pointer text-xs"
+                      >
+                        <Printer className="w-3.5 h-3.5" /> Reprint Receipt
+                      </Button>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
 
             {/* Modal Footer Actions */}
             <div className="p-4 border-t border-border flex items-center justify-between gap-3 bg-secondary/10">
-              <Button
-                variant="outline"
-                onClick={() => {
-                  const tNum = selectedTableNum;
-                  setSelectedTableNum(null);
-                  openManualOrderModal(tNum || undefined);
-                }}
-                className="cursor-pointer font-bold gap-1.5 text-primary hover:text-primary hover:bg-primary/10"
-              >
-                <Plus className="w-4 h-4" /> Add Items to Table
-              </Button>
-
-              <div className="flex items-center gap-3">
-                <Button variant="outline" onClick={() => setSelectedTableNum(null)} className="cursor-pointer font-bold">
-                  Cancel
-                </Button>
-
-                {selectedTableInfo.latestOrder && (
+              {selectedTableInfo.orders.length > 0 ? (
+                <>
                   <Button
-                    disabled={completingTable}
-                    onClick={() => handleAdminCompleteAndPrint(selectedTableInfo.latestOrder!)}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer font-bold gap-1.5 shadow-md shadow-emerald-500/20"
+                    variant="outline"
+                    onClick={() => {
+                      const tNum = selectedTableNum;
+                      setSelectedTableNum(null);
+                      openManualOrderModal(tNum || undefined);
+                    }}
+                    className="cursor-pointer font-bold gap-1.5 text-primary hover:text-primary hover:bg-primary/10"
                   >
-                    {completingTable ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" /> Finalizing & Printing...
-                      </>
-                    ) : (
-                      <>
-                        <Printer className="w-4 h-4" />{' '}
-                        {selectedTableInfo.matchingBill?.paymentStatus === 'verifying'
-                          ? 'APPROVE PAYMENT & PRINT BILL'
-                          : 'COMPLETE & PRINT BILL'}
-                      </>
-                    )}
+                    <Plus className="w-4 h-4" /> Add More Items
                   </Button>
-                )}
-              </div>
+
+                  <div className="flex items-center gap-3">
+                    <Button variant="outline" onClick={() => setSelectedTableNum(null)} className="cursor-pointer font-bold">
+                      Cancel
+                    </Button>
+
+                    {selectedTableInfo.latestOrder && (
+                      <Button
+                        disabled={completingTable}
+                        onClick={() => handleAdminCompleteAndPrint(selectedTableInfo.latestOrder!)}
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer font-bold gap-1.5 shadow-md shadow-emerald-500/20"
+                      >
+                        {completingTable ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" /> Finalizing & Printing...
+                          </>
+                        ) : (
+                          <>
+                            <Printer className="w-4 h-4" />{' '}
+                            {selectedTableInfo.matchingBill?.paymentStatus === 'verifying'
+                              ? 'APPROVE PAYMENT & PRINT BILL'
+                              : 'COMPLETE & PRINT BILL'}
+                          </>
+                        )}
+                      </Button>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="flex items-center justify-end w-full gap-2">
+                  <Button variant="outline" onClick={() => setSelectedTableNum(null)} className="cursor-pointer font-bold">
+                    Close
+                  </Button>
+                </div>
+              )}
             </div>
           </div>
         </div>
