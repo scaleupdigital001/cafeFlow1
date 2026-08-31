@@ -119,15 +119,15 @@ export const buildThermalReceiptHTML = (data: ThermalReceiptData): string => {
       padding: 0;
     }
     body {
-      font-family: Consolas, 'Courier New', Courier, monospace;
+      font-family: Arial, 'Helvetica Neue', Helvetica, sans-serif;
       font-size: 12px;
-      font-weight: 600;
+      font-weight: 700;
       line-height: 1.3;
       color: #000;
       background: #fff;
       -webkit-print-color-adjust: exact;
       print-color-adjust: exact;
-      -webkit-font-smoothing: antialiased;
+      -webkit-font-smoothing: none;
       text-rendering: optimizeLegibility;
       width: 78mm;
       max-width: 100%;
@@ -151,15 +151,16 @@ export const buildThermalReceiptHTML = (data: ThermalReceiptData): string => {
       margin-bottom: 2px;
     }
     .restaurant-info {
-      font-size: 11px;
+      font-size: 12px;
+      font-weight: 700;
       margin-bottom: 2px;
     }
 
     .meta-table {
       width: 100%;
       margin: 6px 0;
-      font-size: 11px;
-      font-weight: 600;
+      font-size: 12px;
+      font-weight: 700;
       border-bottom: 1px dashed #000;
       padding-bottom: 4px;
     }
@@ -197,19 +198,19 @@ export const buildThermalReceiptHTML = (data: ThermalReceiptData): string => {
       text-align: right;
     }
     .item-sub-line {
-      font-size: 11px;
+      font-size: 12px;
       color: #000;
-      font-weight: 600;
+      font-weight: 700;
     }
     .item-extra {
-      font-size: 11px;
+      font-size: 12px;
       color: #000;
-      font-weight: 600;
+      font-weight: 700;
       padding-left: 6px;
       font-style: italic;
     }
     .item-note {
-      font-size: 11px;
+      font-size: 12px;
       color: #000;
       padding-left: 6px;
       font-weight: 700;
@@ -217,8 +218,8 @@ export const buildThermalReceiptHTML = (data: ThermalReceiptData): string => {
 
     .totals-container {
       margin: 6px 0;
-      font-size: 11px;
-      font-weight: 600;
+      font-size: 12px;
+      font-weight: 700;
       border-bottom: 1px double #000;
       padding-bottom: 6px;
     }
@@ -240,8 +241,8 @@ export const buildThermalReceiptHTML = (data: ThermalReceiptData): string => {
     .footer {
       text-align: center;
       margin-top: 8px;
-      font-size: 11px;
-      font-weight: 600;
+      font-size: 12px;
+      font-weight: 700;
       color: #000;
     }
     .footer-thanks {
