@@ -103,6 +103,8 @@ export const buildThermalReceiptHTML = (data: ThermalReceiptData): string => {
     }
     @media print {
       body {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
         width: 78mm;
         margin: 0 auto;
         padding: 4mm 2mm;
@@ -117,11 +119,16 @@ export const buildThermalReceiptHTML = (data: ThermalReceiptData): string => {
       padding: 0;
     }
     body {
-      font-family: 'Courier New', Courier, monospace, monospace;
+      font-family: Consolas, 'Courier New', Courier, monospace;
       font-size: 12px;
+      font-weight: 600;
       line-height: 1.3;
       color: #000;
       background: #fff;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
       width: 78mm;
       max-width: 100%;
       margin: 0 auto;
@@ -129,7 +136,7 @@ export const buildThermalReceiptHTML = (data: ThermalReceiptData): string => {
     }
     .text-center { text-align: center; }
     .text-right { text-align: right; }
-    .bold { font-weight: bold; }
+    .bold { font-weight: 700; }
     
     .header {
       text-align: center;
@@ -139,12 +146,12 @@ export const buildThermalReceiptHTML = (data: ThermalReceiptData): string => {
     }
     .restaurant-name {
       font-size: 16px;
-      font-weight: bold;
+      font-weight: 700;
       text-transform: uppercase;
       margin-bottom: 2px;
     }
     .restaurant-info {
-      font-size: 10px;
+      font-size: 11px;
       margin-bottom: 2px;
     }
 
@@ -152,6 +159,7 @@ export const buildThermalReceiptHTML = (data: ThermalReceiptData): string => {
       width: 100%;
       margin: 6px 0;
       font-size: 11px;
+      font-weight: 600;
       border-bottom: 1px dashed #000;
       padding-bottom: 4px;
     }
@@ -172,7 +180,7 @@ export const buildThermalReceiptHTML = (data: ThermalReceiptData): string => {
     .item-title-line {
       display: flex;
       justify-content: space-between;
-      font-weight: bold;
+      font-weight: 700;
       font-size: 12px;
     }
     .item-name {
@@ -189,23 +197,28 @@ export const buildThermalReceiptHTML = (data: ThermalReceiptData): string => {
       text-align: right;
     }
     .item-sub-line {
-      font-size: 10px;
-      color: #333;
+      font-size: 11px;
+      color: #000;
+      font-weight: 600;
     }
     .item-extra {
-      font-size: 10px;
+      font-size: 11px;
+      color: #000;
+      font-weight: 600;
       padding-left: 6px;
       font-style: italic;
     }
     .item-note {
-      font-size: 10px;
+      font-size: 11px;
+      color: #000;
       padding-left: 6px;
-      font-weight: bold;
+      font-weight: 700;
     }
 
     .totals-container {
       margin: 6px 0;
       font-size: 11px;
+      font-weight: 600;
       border-bottom: 1px double #000;
       padding-bottom: 6px;
     }
@@ -218,7 +231,7 @@ export const buildThermalReceiptHTML = (data: ThermalReceiptData): string => {
       display: flex;
       justify-content: space-between;
       font-size: 14px;
-      font-weight: bold;
+      font-weight: 700;
       margin-top: 4px;
       padding-top: 4px;
       border-top: 1px dashed #000;
@@ -227,10 +240,12 @@ export const buildThermalReceiptHTML = (data: ThermalReceiptData): string => {
     .footer {
       text-align: center;
       margin-top: 8px;
-      font-size: 10px;
+      font-size: 11px;
+      font-weight: 600;
+      color: #000;
     }
     .footer-thanks {
-      font-weight: bold;
+      font-weight: 700;
       margin-bottom: 2px;
     }
   </style>
