@@ -1,9 +1,14 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import api from '../../../lib/axios';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '../../../components/ui/card';
-import { Loader2, TrendingUp, DollarSign, ShoppingBag, Layers, Star, Info, Download, AlertTriangle } from 'lucide-react';
+import { 
+  Loader2, TrendingUp, DollarSign, ShoppingBag, Layers, Star, Info, 
+  Download, AlertTriangle, Printer, Calendar, ChevronLeft, ChevronRight, 
+  FileText, CheckCircle2, X, Search, Sparkles, Receipt
+} from 'lucide-react';
+import { printDailySalesReport, DailySalesReportData } from '../../../lib/printService';
 import dynamic from 'next/dynamic';
 
 const ResponsiveContainer = dynamic(() => import('recharts').then((m) => m.ResponsiveContainer), { ssr: false });
@@ -55,6 +60,15 @@ export default function AdminDashboardPage() {
   
   const [mounted, setMounted] = useState(false);
   const todayStr = new Date().toISOString().split('T')[0];
+
+  // Daily Sales Report states
+  const [selectedReportDate, setSelectedReportDate] = useState(todayStr);
+  const [dailyReportData, setDailyReportData] = useState<DailySalesReportData | null>(null);
+  const [dailyReportLoading, setDailyReportLoading] = useState(true);
+  const [dailyReportError, setDailyReportError] = useState<string | null>(null);
+  const [isFullReportModalOpen, setIsFullReportModalOpen] = useState(false);
+  const [isPrintingReport, setIsPrintingReport] = useState(false);
+  const [itemSearchQuery, setItemSearchQuery] = useState('');
 
   const [startDate, setStartDate] = useState(() => {
     const d = new Date();
@@ -145,6 +159,66 @@ export default function AdminDashboardPage() {
 
     fetchAnalytics();
   }, []);
+
+  const fetchDailySalesReport = async (dateStr: string) => {
+    setDailyReportLoading(true);
+    setDailyReportError(null);
+    try {
+      const res = await api.get('/analytics/daily-sales', { params: { date: dateStr } });
+      if (res.data.success) {
+        setDailyReportData(res.data.data);
+      }
+    } catch (err: any) {
+      console.error('Fetch daily report error:', err);
+      setDailyReportError(err.response?.data?.message || 'Failed to load daily report.');
+    } finally {
+      setDailyReportLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (mounted) {
+      fetchDailySalesReport(selectedReportDate);
+    }
+  }, [selectedReportDate, mounted]);
+
+  const handlePrevDay = () => {
+    const d = new Date(selectedReportDate);
+    d.setDate(d.getDate() - 1);
+    setSelectedReportDate(d.toISOString().split('T')[0]);
+  };
+
+  const handleNextDay = () => {
+    if (selectedReportDate >= todayStr) return;
+    const d = new Date(selectedReportDate);
+    d.setDate(d.getDate() + 1);
+    const nextStr = d.toISOString().split('T')[0];
+    setSelectedReportDate(nextStr > todayStr ? todayStr : nextStr);
+  };
+
+  const handleSetToday = () => {
+    setSelectedReportDate(todayStr);
+  };
+
+  const handlePrintDailyReport = async () => {
+    if (!dailyReportData) return;
+    setIsPrintingReport(true);
+    try {
+      await printDailySalesReport(dailyReportData);
+    } catch (err) {
+      console.error('Daily sales print failed:', err);
+    } finally {
+      setIsPrintingReport(false);
+    }
+  };
+
+  const filteredReportItems = useMemo(() => {
+    if (!dailyReportData?.items) return [];
+    if (!itemSearchQuery.trim()) return dailyReportData.items;
+    return dailyReportData.items.filter((item) =>
+      item.name.toLowerCase().includes(itemSearchQuery.toLowerCase())
+    );
+  }, [dailyReportData, itemSearchQuery]);
 
   if (loading) {
     return (
@@ -262,6 +336,177 @@ export default function AdminDashboardPage() {
         })}
       </div>
 
+      {/* Daily Sales / Day-End Report Section */}
+      <Card className="border border-border/60 shadow-md overflow-hidden bg-card">
+        <div className="p-5 border-b border-border/50 flex flex-col md:flex-row md:items-center justify-between gap-4 bg-secondary/15">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+              <Receipt className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="font-serif font-black text-lg text-foreground">Daily Sales Report</h3>
+                <span className="text-[10px] font-bold uppercase tracking-wider bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 rounded-md">
+                  {dailyReportData?.formattedDate || selectedReportDate}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground">Day-end sales summary, item breakdown, and direct thermal POS receipt printing</p>
+            </div>
+          </div>
+
+          {/* Date controls */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center bg-background border border-border rounded-xl p-1 shadow-xs">
+              <button
+                onClick={handlePrevDay}
+                className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground cursor-pointer transition-colors"
+                title="Previous Day"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              
+              <div className="flex items-center gap-1 px-2">
+                <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
+                <input
+                  type="date"
+                  value={selectedReportDate}
+                  max={todayStr}
+                  onChange={(e) => setSelectedReportDate(e.target.value)}
+                  className="bg-transparent text-xs font-semibold focus:outline-none text-foreground cursor-pointer"
+                />
+              </div>
+
+              <button
+                onClick={handleNextDay}
+                disabled={selectedReportDate >= todayStr}
+                className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground cursor-pointer transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                title="Next Day"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+
+            <button
+              onClick={handleSetToday}
+              className={`px-3 py-1.5 text-xs font-bold rounded-xl border transition-all cursor-pointer ${
+                selectedReportDate === todayStr
+                  ? 'bg-primary text-white border-primary shadow-xs'
+                  : 'bg-background hover:bg-secondary text-muted-foreground border-border'
+              }`}
+            >
+              Today
+            </button>
+          </div>
+        </div>
+
+        <CardContent className="p-5">
+          {dailyReportLoading ? (
+            <div className="py-10 flex justify-center items-center gap-2 text-xs text-muted-foreground">
+              <Loader2 className="w-5 h-5 animate-spin text-primary" /> Loading daily report metrics...
+            </div>
+          ) : dailyReportError ? (
+            <div className="p-4 bg-destructive/10 border border-destructive/20 rounded-xl text-destructive text-xs flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span>{dailyReportError}</span>
+            </div>
+          ) : dailyReportData ? (
+            <div className="space-y-5">
+              {/* 5 KPIs Row */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                {/* Total Sales */}
+                <div className="p-3.5 rounded-2xl bg-secondary/30 border border-border/50 space-y-1">
+                  <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">Total Sales</span>
+                  <div className="text-xl font-black font-sans text-foreground">
+                    Rs. {dailyReportData.summary.netSales.toFixed(2)}
+                  </div>
+                  <span className="text-[10px] text-muted-foreground block">
+                    Gross: Rs. {dailyReportData.summary.grossSales.toFixed(2)} {dailyReportData.summary.taxes > 0 ? `| Tax: Rs. ${dailyReportData.summary.taxes.toFixed(2)}` : ''}
+                  </span>
+                </div>
+
+                {/* Total Orders */}
+                <div className="p-3.5 rounded-2xl bg-secondary/30 border border-border/50 space-y-1">
+                  <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">Total Orders</span>
+                  <div className="text-xl font-black font-sans text-foreground">
+                    {dailyReportData.summary.totalOrders}
+                  </div>
+                  <span className="text-[10px] text-muted-foreground block">
+                    Completed: {dailyReportData.summary.completedOrders} {dailyReportData.summary.cancelledOrders > 0 ? `| Cancelled: ${dailyReportData.summary.cancelledOrders}` : ''}
+                  </span>
+                </div>
+
+                {/* Items Sold */}
+                <div className="p-3.5 rounded-2xl bg-secondary/30 border border-border/50 space-y-1">
+                  <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">Items Sold</span>
+                  <div className="text-xl font-black font-sans text-foreground">
+                    {dailyReportData.summary.totalItems} <span className="text-xs font-normal text-muted-foreground">units</span>
+                  </div>
+                  <span className="text-[10px] text-muted-foreground block">
+                    Avg: Rs. {dailyReportData.summary.averageOrderValue.toFixed(2)} / order
+                  </span>
+                </div>
+
+                {/* Cash Sales */}
+                <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 space-y-1">
+                  <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider block">Cash Sales</span>
+                  <div className="text-xl font-black font-sans text-emerald-700 dark:text-emerald-300">
+                    Rs. {(dailyReportData.payments.find(p => p.method === 'cash')?.amount || 0).toFixed(2)}
+                  </div>
+                  <span className="text-[10px] text-emerald-600 dark:text-emerald-400 block">
+                    {dailyReportData.payments.find(p => p.method === 'cash')?.count || 0} cash orders
+                  </span>
+                </div>
+
+                {/* Online / UPI Sales */}
+                <div className="p-3.5 rounded-2xl bg-blue-500/10 border border-blue-500/20 space-y-1 col-span-2 sm:col-span-1">
+                  <span className="text-[10px] font-bold text-blue-700 dark:text-blue-400 uppercase tracking-wider block">Online / UPI</span>
+                  <div className="text-xl font-black font-sans text-blue-700 dark:text-blue-300">
+                    Rs. {(dailyReportData.payments.find(p => p.method === 'upi_link')?.amount || 0).toFixed(2)}
+                  </div>
+                  <span className="text-[10px] text-blue-600 dark:text-blue-400 block">
+                    {dailyReportData.payments.find(p => p.method === 'upi_link')?.count || 0} UPI orders
+                  </span>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 border-t border-border/40">
+                <div className="text-xs text-muted-foreground">
+                  {dailyReportData.items.length > 0
+                    ? `${dailyReportData.items.length} distinct menu items sold on ${dailyReportData.formattedDate}.`
+                    : `No completed sales recorded on ${dailyReportData.formattedDate}.`}
+                </div>
+
+                <div className="flex items-center gap-2.5 w-full sm:w-auto">
+                  <button
+                    onClick={() => setIsFullReportModalOpen(true)}
+                    className="flex-1 sm:flex-none px-4 py-2.5 bg-secondary hover:bg-muted text-foreground border border-border rounded-xl text-xs font-bold cursor-pointer transition-all flex items-center justify-center gap-1.5"
+                  >
+                    <FileText className="w-4 h-4 text-primary" /> View Full Report
+                  </button>
+
+                  <button
+                    onClick={handlePrintDailyReport}
+                    disabled={isPrintingReport}
+                    className="flex-1 sm:flex-none px-5 py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-xs font-bold cursor-pointer transition-all shadow-md shadow-primary/20 flex items-center justify-center gap-2 disabled:opacity-60"
+                  >
+                    {isPrintingReport ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" /> Preparing Print...
+                      </>
+                    ) : (
+                      <>
+                        <Printer className="w-4 h-4" /> Print Daily Report
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
+
       {/* Charts Panels */}
       {mounted && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -375,6 +620,205 @@ export default function AdminDashboardPage() {
               )}
             </CardContent>
           </Card>
+        </div>
+      )}
+
+      {/* Full Daily Sales Report Modal Dialog */}
+      {isFullReportModalOpen && dailyReportData && (
+        <div className="fixed inset-0 z-50 bg-stone-950/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-card text-card-foreground w-full max-w-3xl rounded-3xl border border-border shadow-2xl overflow-hidden animate-fade-in max-h-[92vh] flex flex-col">
+            {/* Modal Header */}
+            <div className="p-5 border-b border-border flex items-center justify-between bg-secondary/20">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-primary/10 border border-primary/20 text-primary flex items-center justify-center shrink-0">
+                  <Receipt className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-serif font-black text-lg">{dailyReportData.restaurant.name}</h3>
+                  <p className="text-xs text-muted-foreground">
+                    Daily Sales Report • <span className="font-bold text-foreground">{dailyReportData.formattedDate}</span> (Generated: {dailyReportData.generatedAt})
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handlePrintDailyReport}
+                  disabled={isPrintingReport}
+                  className="px-3.5 py-2 bg-primary hover:bg-primary/90 text-white rounded-xl text-xs font-bold cursor-pointer transition-all flex items-center gap-1.5 shadow-sm disabled:opacity-60"
+                  title="Print POS Report"
+                >
+                  {isPrintingReport ? <Loader2 className="w-4 h-4 animate-spin" /> : <Printer className="w-4 h-4" />}
+                  <span>Print POS Report</span>
+                </button>
+
+                <button
+                  onClick={() => setIsFullReportModalOpen(false)}
+                  className="p-2 rounded-full bg-secondary text-muted-foreground hover:text-foreground cursor-pointer transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Content */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-6 text-sm">
+              {/* Summary KPIs Banner */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-secondary/20 p-4 rounded-2xl border border-border/50">
+                <div>
+                  <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">Total Net Sales</span>
+                  <div className="text-xl font-black text-foreground">Rs. {dailyReportData.summary.netSales.toFixed(2)}</div>
+                  <span className="text-[10px] text-muted-foreground">Gross: Rs. {dailyReportData.summary.grossSales.toFixed(2)}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">Paid Orders</span>
+                  <div className="text-xl font-black text-foreground">{dailyReportData.summary.totalOrders}</div>
+                  <span className="text-[10px] text-muted-foreground">Avg: Rs. {dailyReportData.summary.averageOrderValue.toFixed(2)}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">Items Sold</span>
+                  <div className="text-xl font-black text-foreground">{dailyReportData.summary.totalItems}</div>
+                  <span className="text-[10px] text-muted-foreground">{dailyReportData.items.length} distinct dishes</span>
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">Cash / UPI</span>
+                  <div className="text-xs font-bold text-foreground space-y-0.5 pt-1">
+                    <div>Cash: Rs. {(dailyReportData.payments.find(p => p.method === 'cash')?.amount || 0).toFixed(2)}</div>
+                    <div>UPI: Rs. {(dailyReportData.payments.find(p => p.method === 'upi_link')?.amount || 0).toFixed(2)}</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Item-wise Particulars Section */}
+              <div className="space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h4 className="font-serif font-bold text-base text-foreground">Particulars / Item-wise Breakdown</h4>
+                    <p className="text-xs text-muted-foreground">Consolidated quantity and sales per menu item</p>
+                  </div>
+
+                  <div className="relative w-full sm:w-64">
+                    <Search className="absolute left-3 top-2.5 w-3.5 h-3.5 text-muted-foreground" />
+                    <input
+                      type="text"
+                      value={itemSearchQuery}
+                      onChange={(e) => setItemSearchQuery(e.target.value)}
+                      placeholder="Search particulars..."
+                      className="w-full text-xs bg-secondary/40 border border-border rounded-xl pl-8 pr-3 py-2 outline-none focus:ring-1 focus:ring-primary text-foreground"
+                    />
+                  </div>
+                </div>
+
+                <div className="border border-border rounded-2xl overflow-hidden shadow-xs">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-secondary/40 border-b border-border text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                      <tr>
+                        <th className="py-3 px-4">#</th>
+                        <th className="py-3 px-4">Particulars (Menu Item)</th>
+                        <th className="py-3 px-4 text-center">Quantity Sold</th>
+                        <th className="py-3 px-4 text-right">Total Amount (Rs.)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/60">
+                      {filteredReportItems.length === 0 ? (
+                        <tr>
+                          <td colSpan={4} className="py-8 text-center text-xs text-muted-foreground">
+                            {itemSearchQuery ? 'No menu items matching your search.' : 'No completed sales recorded for this date.'}
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredReportItems.map((item, idx) => (
+                          <tr key={idx} className="hover:bg-secondary/20 transition-colors">
+                            <td className="py-2.5 px-4 font-mono text-muted-foreground text-[11px]">{idx + 1}</td>
+                            <td className="py-2.5 px-4 font-bold text-foreground">{item.name}</td>
+                            <td className="py-2.5 px-4 text-center font-bold text-foreground">{item.quantity}</td>
+                            <td className="py-2.5 px-4 text-right font-black font-sans text-foreground">Rs. {item.amount.toFixed(2)}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                    <tfoot className="bg-secondary/30 border-t-2 border-border font-bold text-xs">
+                      <tr>
+                        <td colSpan={2} className="py-3 px-4 uppercase tracking-wider font-extrabold">Total Items & Sales</td>
+                        <td className="py-3 px-4 text-center font-black">{dailyReportData.summary.totalItems}</td>
+                        <td className="py-3 px-4 text-right font-black text-primary text-sm font-sans">
+                          Rs. {dailyReportData.summary.netSales.toFixed(2)}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+
+              {/* Payment Summary Section */}
+              <div className="grid sm:grid-cols-2 gap-4">
+                <div className="p-4 rounded-2xl border border-border bg-secondary/15 space-y-3">
+                  <h4 className="font-serif font-bold text-sm text-foreground">Payment Summary</h4>
+                  <div className="space-y-2">
+                    {dailyReportData.payments.map((p, idx) => (
+                      <div key={idx} className="flex justify-between items-center text-xs py-1 border-b border-border/40 last:border-0">
+                        <span className="text-muted-foreground">{p.label} ({p.count} bills)</span>
+                        <span className="font-bold text-foreground">Rs. {p.amount.toFixed(2)}</span>
+                      </div>
+                    ))}
+                    <div className="flex justify-between items-center text-xs pt-2 font-black border-t border-border">
+                      <span>Total Reconciled</span>
+                      <span className="text-primary font-sans text-sm">Rs. {dailyReportData.summary.netSales.toFixed(2)}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-2xl border border-border bg-secondary/15 space-y-3">
+                  <h4 className="font-serif font-bold text-sm text-foreground">Orders & Lifecycle</h4>
+                  <div className="space-y-2 text-xs">
+                    <div className="flex justify-between py-1 border-b border-border/40">
+                      <span className="text-muted-foreground">Completed Paid Orders</span>
+                      <span className="font-bold text-emerald-600 dark:text-emerald-400">{dailyReportData.summary.completedOrders}</span>
+                    </div>
+                    <div className="flex justify-between py-1 border-b border-border/40">
+                      <span className="text-muted-foreground">Cancelled Orders</span>
+                      <span className="font-bold text-destructive">{dailyReportData.summary.cancelledOrders}</span>
+                    </div>
+                    <div className="flex justify-between py-1 border-b border-border/40">
+                      <span className="text-muted-foreground">Average Order Value</span>
+                      <span className="font-bold text-foreground">Rs. {dailyReportData.summary.averageOrderValue.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between pt-2 font-black border-t border-border">
+                      <span>Total Orders Logged</span>
+                      <span className="font-sans">{dailyReportData.summary.allOrders}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-border flex items-center justify-between gap-3 bg-secondary/20">
+              <span className="text-[11px] text-muted-foreground">
+                CafeFlow SaaS POS Daily Reconciliation
+              </span>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsFullReportModalOpen(false)}
+                  className="px-4 py-2 bg-secondary hover:bg-muted text-foreground border border-border rounded-xl text-xs font-bold cursor-pointer transition-all"
+                >
+                  Close
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handlePrintDailyReport}
+                  disabled={isPrintingReport}
+                  className="px-5 py-2 bg-primary hover:bg-primary/90 text-white rounded-xl text-xs font-bold cursor-pointer transition-all flex items-center gap-1.5 shadow-md shadow-primary/20 disabled:opacity-60"
+                >
+                  {isPrintingReport ? <Loader2 className="w-4 h-4 animate-spin" /> : <Printer className="w-4 h-4" />}
+                  <span>Print POS Report</span>
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

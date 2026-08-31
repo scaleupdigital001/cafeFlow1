@@ -317,4 +317,158 @@ router.get('/daily-report', protect, restrictTo('restaurant_admin'), async (req:
   }
 });
 
+/**
+ * @route   GET /api/analytics/daily-sales
+ * @desc    Get structured daily sales report data (Summary, Itemized particulars, and Payments) for a specific business date
+ * @access  Private (Restaurant Admin / Staff)
+ */
+router.get('/daily-sales', protect, restrictTo('restaurant_admin', 'staff'), async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user || !req.user.restaurantId) {
+      return res.status(400).json({ success: false, message: 'User is not associated with any restaurant.' });
+    }
+    const restaurantId = req.user.restaurantId;
+
+    // Date parsing: Defaults to today in local date
+    const now = new Date();
+    const targetDateStr = (req.query.date as string) || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const [yearStr, monthStr, dayStr] = targetDateStr.split('-');
+    const year = parseInt(yearStr, 10);
+    const month = parseInt(monthStr, 10) - 1;
+    const day = parseInt(dayStr, 10);
+
+    const startOfDay = new Date(year, month, day, 0, 0, 0, 0);
+    const endOfDay = new Date(year, month, day, 23, 59, 59, 999);
+
+    const restaurant = await Restaurant.findById(restaurantId).lean();
+    const cafeName = restaurant ? restaurant.name : 'CafeFlow Restaurant';
+
+    // 1. Fetch settled bills on the selected business date
+    const bills = await Bill.find({
+      restaurantId,
+      paymentStatus: 'paid',
+      updatedAt: { $gte: startOfDay, $lte: endOfDay }
+    }).populate('orderId').sort({ updatedAt: 1 }).lean();
+
+    // 2. Query order counts for the full business day
+    const [allOrdersCount, completedOrdersCount, cancelledOrdersCount] = await Promise.all([
+      Order.countDocuments({ restaurantId, createdAt: { $gte: startOfDay, $lte: endOfDay } }),
+      Order.countDocuments({ restaurantId, status: 'completed', createdAt: { $gte: startOfDay, $lte: endOfDay } }),
+      Order.countDocuments({ restaurantId, status: 'cancelled', createdAt: { $gte: startOfDay, $lte: endOfDay } }),
+    ]);
+
+    // 3. Aggregate item-wise particulars
+    const itemMap = new Map<string, { name: string; quantity: number; amount: number }>();
+    let totalItemsCount = 0;
+
+    bills.forEach((bill: any) => {
+      const order = bill.orderId;
+      if (order && Array.isArray(order.items)) {
+        order.items.forEach((item: any) => {
+          totalItemsCount += (item.quantity || 1);
+          const extraPrice = Array.isArray(item.customizations)
+            ? item.customizations.reduce((sum: number, c: any) => sum + (c.extraPrice || 0), 0)
+            : 0;
+          const unitPrice = (item.price || 0) + extraPrice;
+          const itemTotal = unitPrice * (item.quantity || 1);
+
+          const existing = itemMap.get(item.name) || { name: item.name, quantity: 0, amount: 0 };
+          itemMap.set(item.name, {
+            name: item.name,
+            quantity: existing.quantity + (item.quantity || 1),
+            amount: Number((existing.amount + itemTotal).toFixed(2))
+          });
+        });
+      }
+    });
+
+    const items = Array.from(itemMap.values()).sort((a, b) => b.quantity - a.quantity || a.name.localeCompare(b.name));
+
+    // 4. Payment breakdown
+    let cashAmount = 0;
+    let cashCount = 0;
+    let upiAmount = 0;
+    let upiCount = 0;
+    let otherAmount = 0;
+    let otherCount = 0;
+
+    bills.forEach((bill: any) => {
+      if (bill.paymentMethod === 'cash') {
+        cashAmount += bill.totalAmount;
+        cashCount += 1;
+      } else if (bill.paymentMethod === 'upi_link' || bill.paymentMethod === 'upi') {
+        upiAmount += bill.totalAmount;
+        upiCount += 1;
+      } else {
+        otherAmount += bill.totalAmount;
+        otherCount += 1;
+      }
+    });
+
+    const payments = [
+      { method: 'cash', label: 'Cash', count: cashCount, amount: Number(cashAmount.toFixed(2)) },
+      { method: 'upi_link', label: 'Online / UPI', count: upiCount, amount: Number(upiAmount.toFixed(2)) },
+    ];
+    if (otherCount > 0) {
+      payments.push({ method: 'other', label: 'Other', count: otherCount, amount: Number(otherAmount.toFixed(2)) });
+    }
+
+    // 5. Summary metrics
+    const totalOrders = bills.length;
+    const grossSales = Number(bills.reduce((sum: number, b: any) => sum + (b.subtotal || 0), 0).toFixed(2));
+    const taxes = Number(bills.reduce((sum: number, b: any) => sum + (b.tax || 0), 0).toFixed(2));
+    const netSales = Number(bills.reduce((sum: number, b: any) => sum + (b.totalAmount || 0), 0).toFixed(2));
+    const averageOrderValue = totalOrders > 0 ? Number((netSales / totalOrders).toFixed(2)) : 0;
+
+    const dateObj = new Date(year, month, day);
+    const formattedDate = dateObj.toLocaleDateString('en-IN', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    });
+
+    const generatedAt = new Date().toLocaleString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        date: targetDateStr,
+        formattedDate,
+        generatedAt,
+        restaurant: {
+          name: cafeName,
+          address: restaurant?.address || '',
+          contact: restaurant?.contact || '',
+          gstNumber: restaurant?.gstNumber || '',
+          taxRate: restaurant?.taxRate !== undefined && restaurant?.taxRate !== null ? Number(restaurant.taxRate) : 5,
+        },
+        summary: {
+          grossSales,
+          taxes,
+          taxRate: restaurant?.taxRate !== undefined && restaurant?.taxRate !== null ? Number(restaurant.taxRate) : 5,
+          netSales,
+          totalOrders,
+          completedOrders: completedOrdersCount,
+          cancelledOrders: cancelledOrdersCount,
+          allOrders: allOrdersCount,
+          totalItems: totalItemsCount,
+          averageOrderValue,
+        },
+        items,
+        payments,
+      },
+    });
+  } catch (error: any) {
+    console.error('Daily sales report aggregation error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to aggregate daily sales report.', error: error.message });
+  }
+});
+
 export default router;
