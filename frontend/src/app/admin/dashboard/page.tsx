@@ -241,8 +241,8 @@ export default function AdminDashboardPage() {
       {/* Overview Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { label: 'Total Revenue', value: `Rs. ${cards.totalRevenue.toFixed(2)}`, desc: `Today: Rs. ${cards.todayRevenue.toFixed(2)}`, icon: DollarSign, color: 'text-amber-600 bg-amber-100 dark:bg-amber-950/30 dark:text-amber-400' },
-          { label: 'Total Orders', value: cards.totalOrders.toString(), desc: `Today: ${cards.todayOrders} orders`, icon: ShoppingBag, color: 'text-blue-600 bg-blue-100 dark:bg-blue-950/30 dark:text-blue-400' },
+          { label: "Today's Revenue", value: `Rs. ${cards.todayRevenue.toFixed(2)}`, desc: `Total: Rs. ${cards.totalRevenue.toFixed(2)}`, icon: DollarSign, color: 'text-amber-600 bg-amber-100 dark:bg-amber-950/30 dark:text-amber-400' },
+          { label: "Today's Orders", value: cards.todayOrders.toString(), desc: `Total: ${cards.totalOrders} orders`, icon: ShoppingBag, color: 'text-blue-600 bg-blue-100 dark:bg-blue-950/30 dark:text-blue-400' },
           { label: 'Popularity Index', value: popularDishes[0]?.name || 'N/A', desc: popularDishes[0] ? `Sold: ${popularDishes[0].quantity} units` : 'No orders completed yet', icon: Star, color: 'text-yellow-600 bg-yellow-100 dark:bg-yellow-950/30 dark:text-yellow-400' },
           { label: 'Active Tables', value: cards.activeTablesCount.toString(), desc: 'Contactless QR codes active', icon: Layers, color: 'text-emerald-600 bg-emerald-100 dark:bg-emerald-950/30 dark:text-emerald-400' },
         ].map((card, i) => {
