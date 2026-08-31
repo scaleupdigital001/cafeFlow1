@@ -157,11 +157,8 @@ export default function CustomerMenuPage() {
     }
   };
 
-  // Categories List (Only include categories that contain at least one menu item)
-  const defaultCategories = ['Coffee', 'Tea', 'Mocktails', 'Snacks', 'Breakfast', 'Lunch', 'Dinner', 'Desserts'];
-  const dishCategories = Array.from(new Set(dishes.map((d) => d.category))).filter(Boolean);
-  const allKnownCategories = Array.from(new Set([...defaultCategories, ...dishCategories]));
-  const visibleCategories = allKnownCategories.filter((cat) => dishes.some((d) => d.category === cat));
+  // Categories List (Derived strictly from active dishes so no unwanted categories appear)
+  const visibleCategories = Array.from(new Set(dishes.map((d) => d.category))).filter(Boolean);
   const categories = ['All', ...visibleCategories];
 
   // Check for active order in localStorage on mount

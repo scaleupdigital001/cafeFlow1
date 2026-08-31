@@ -66,17 +66,16 @@ export default function AdminMenuPage() {
   const [tempOptionsList, setTempOptionsList] = useState<CustomizationOption[]>([]);
 
   const defaultCategories = useMemo(() => [
-    'Coffee', 'Tea', 'Mocktails', 'Beverages', 'Snacks', 'Breakfast', 'Lunch', 'Dinner', 'Desserts', 'Bakery'
+    'Coffee', 'Tea', 'Beverages', 'Snacks', 'Fast Food', 'Desserts'
   ], []);
 
-  const allAvailableCategories = useMemo(() => {
-    const activeCategories = Array.from(new Set(dishes.map((d) => d.category))).filter(Boolean);
-    return Array.from(new Set([...defaultCategories, ...activeCategories]));
-  }, [dishes, defaultCategories]);
-
   const visibleCategories = useMemo(() => {
-    return allAvailableCategories.filter((cat) => dishes.some((d) => d.category === cat));
-  }, [dishes, allAvailableCategories]);
+    return Array.from(new Set(dishes.map((d) => d.category))).filter(Boolean);
+  }, [dishes]);
+
+  const allAvailableCategories = useMemo(() => {
+    return Array.from(new Set([...visibleCategories, ...defaultCategories]));
+  }, [visibleCategories, defaultCategories]);
 
   // Automatically reset category filter to 'All' if selected category becomes empty
   useEffect(() => {
