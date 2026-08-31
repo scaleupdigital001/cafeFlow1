@@ -85,7 +85,7 @@ export default function AdminDashboardPage() {
       });
 
       // Handle server error returned as Blob
-      const contentType = res.headers['content-type'] || '';
+      const contentType = String(res.headers['content-type'] || '');
       if (contentType.includes('application/json')) {
         const text = await res.data.text();
         const json = JSON.parse(text);

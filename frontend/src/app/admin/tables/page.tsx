@@ -57,7 +57,7 @@ interface ManualCartItem {
  * Natural numerical comparison helper for table identifiers (e.g. "1" < "2" < "9" < "10" < "11" < "20")
  * Handles pure numeric strings as well as prefixed identifiers ("Table 1", "T-2", etc.)
  */
-export const compareTableNumbers = (aStr: string, bStr: string): number => {
+const compareTableNumbers = (aStr: string, bStr: string): number => {
   const matchA = aStr.match(/\d+/);
   const matchB = bStr.match(/\d+/);
   const numA = matchA ? parseInt(matchA[0], 10) : NaN;

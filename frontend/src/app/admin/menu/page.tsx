@@ -7,7 +7,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '../../../components/ui
 import { Badge } from '../../../components/ui/badge';
 import { 
   Loader2, Plus, Edit, Trash2, CheckCircle2, XCircle, Coffee, 
-  Search, ToggleLeft, ToggleRight, Info, AlertTriangle, Eye, Sparkles
+  Search, ToggleLeft, ToggleRight, Info, AlertTriangle, Eye, Sparkles, X
 } from 'lucide-react';
 
 interface CustomizationOption {
