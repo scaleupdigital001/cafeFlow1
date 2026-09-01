@@ -162,41 +162,49 @@ export default function CustomerMenuPage() {
   const visibleCategories = Array.from(new Set(dishes.map((d) => d.category))).filter(Boolean);
   const categories = ['All', ...visibleCategories];
 
-  // Check for active order in localStorage on mount
+  // Check for active order in localStorage or active table session on mount
   useEffect(() => {
-    const storedOrderId = localStorage.getItem(`active_order_${slug}`);
-    if (storedOrderId) {
-      const checkOrderStatus = async () => {
+    const syncActiveOrder = async () => {
+      const storedOrderId = localStorage.getItem(`active_order_${slug}`);
+      if (storedOrderId) {
         try {
           const res = await api.get(`/orders/${storedOrderId}`);
           const orderData = res.data.data;
-          if (orderData.status === 'cancelled') {
-            localStorage.removeItem(`active_order_${slug}`);
-          } else {
+          if (orderData.status !== 'cancelled' && orderData.status !== 'completed') {
             setActiveOrderId(storedOrderId);
             setActiveOrderStatus(orderData.status);
             setOrder(orderData);
-            
-            // Check if bill exists
-            if (orderData.status === 'completed') {
-              try {
-                const billRes = await api.get(`/bills/order/${storedOrderId}`);
-                if (billRes.data.success) {
-                  setBill(billRes.data.data);
-                }
-              } catch (bErr) {
-                console.log('Bill not generated yet');
-              }
-            }
+            return;
+          } else {
+            localStorage.removeItem(`active_order_${slug}`);
           }
         } catch (e) {
-          console.error('Failed to check active order status:', e);
+          console.error('Failed to check stored order status:', e);
           localStorage.removeItem(`active_order_${slug}`);
         }
-      };
-      checkOrderStatus();
-    }
-  }, [slug]);
+      }
+
+      // If no valid stored order on device, check if table has an active session
+      if (restaurant?._id && effectiveTableNumber) {
+        try {
+          const activeRes = await api.get('/orders/active-table', {
+            params: { restaurantId: restaurant._id, tableNumber: effectiveTableNumber },
+          });
+          const activeOrder = activeRes.data.data;
+          if (activeOrder && activeOrder._id) {
+            localStorage.setItem(`active_order_${slug}`, activeOrder._id);
+            setActiveOrderId(activeOrder._id);
+            setActiveOrderStatus(activeOrder.status);
+            setOrder(activeOrder);
+          }
+        } catch (tableErr) {
+          console.log('No active table session found');
+        }
+      }
+    };
+
+    syncActiveOrder();
+  }, [slug, restaurant?._id, effectiveTableNumber]);
 
   // Connect to socket when activeOrderId is available
   const socket = useSocket('order', activeOrderId);

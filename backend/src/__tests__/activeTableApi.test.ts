@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import Order from '../models/Order';
 import TableSession from '../models/TableSession';
 import orderRoutes from '../routes/order';
+import { canonicalTableKey } from '../utils/tableUtils';
 
 dotenv.config();
 
@@ -20,7 +21,7 @@ async function runActiveTableSecurityTests() {
     }
 
     const testRestaurantId = new mongoose.Types.ObjectId();
-    const tableNum = 'T-SEC-300';
+    const tableNum = canonicalTableKey('T-SEC-300');
 
     // 1. Create a dummy Order & TableSession with rich PII data
     const secretCustomerName = 'Sensitive Customer Name John Doe';

@@ -340,11 +340,11 @@ router.get('/active-table', async (req, res) => {
       return res.status(400).json({ success: false, message: 'restaurantId and tableNumber query params are required.' });
     }
 
-    const normTable = String(tableNumber).trim();
+    const normTable = canonicalTableKey(tableNumber as string);
     const session = await TableSession.findOne({
       restaurantId,
       tableNumber: normTable,
-      status: 'active',
+      status: { $in: ['active', 'grace'] },
     }).lean();
 
     if (!session) {
