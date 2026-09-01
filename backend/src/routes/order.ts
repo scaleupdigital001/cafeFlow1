@@ -63,7 +63,60 @@ router.post('/', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Restaurant not found.' });
     }
 
-    // 2. Priority 1 & 3: Get or create TableSession with Idempotency & 3-State Machine
+    // 2. Validate items and compute costs securely from Database pricing BEFORE session creation
+    let addedSubtotal = 0;
+    const validatedNewItems = [];
+
+    for (const item of items) {
+      if (!item.dishId) {
+        return res.status(400).json({ success: false, message: 'Dish identifier is required for all items.' });
+      }
+
+      const dish = await Dish.findById(item.dishId);
+      if (!dish) {
+        return res.status(404).json({ success: false, message: `Dish item "${item.name || item.dishId}" not found.` });
+      }
+
+      if (!dish.available) {
+        return res.status(400).json({ success: false, message: `Dish "${dish.name}" is currently out of stock.` });
+      }
+
+      let itemPrice = dish.price;
+      const itemCustomizations = [];
+
+      if (Array.isArray(item.customizations) && item.customizations.length > 0) {
+        for (const selectedCust of item.customizations) {
+          if (!selectedCust || !selectedCust.name || !selectedCust.selectedOption) continue;
+          const dbCustGroup = dish.customizations?.find(g => g.name === selectedCust.name);
+          if (dbCustGroup) {
+            const dbOption = dbCustGroup.options?.find(o => o.name === selectedCust.selectedOption);
+            if (dbOption) {
+              itemCustomizations.push({
+                name: selectedCust.name,
+                selectedOption: selectedCust.selectedOption,
+                extraPrice: dbOption.extraPrice || 0,
+              });
+              itemPrice += dbOption.extraPrice || 0;
+            }
+          }
+        }
+      }
+
+      const itemQty = Number(item.quantity) > 0 ? Number(item.quantity) : 1;
+      const itemTotal = itemPrice * itemQty;
+      addedSubtotal += itemTotal;
+
+      validatedNewItems.push({
+        dishId: dish._id,
+        name: dish.name,
+        price: dish.price,
+        quantity: itemQty,
+        customizations: itemCustomizations,
+        specialInstructions: item.specialInstructions || '',
+      });
+    }
+
+    // 3. Priority 1 & 3: Get or create TableSession with Idempotency & 3-State Machine
     const { order, session, isNew, isDuplicateRequest } = await getOrCreateActiveTableSession(
       restaurantId,
       tableNumber,
@@ -72,7 +125,6 @@ router.post('/', async (req, res) => {
       clientOrderId
     );
 
-    // Priority 1: Idempotency protection — if duplicate clientOrderId arrives, return existing order
     if (isDuplicateRequest) {
       return res.status(200).json({
         success: true,
@@ -82,74 +134,22 @@ router.post('/', async (req, res) => {
       });
     }
 
-    // 3. Compute costs securely from Database pricing
-    let addedSubtotal = 0;
-    const validatedNewItems = [];
-
-    for (const item of items) {
-      const dish = await Dish.findById(item.dishId);
-      if (!dish) {
-        return res.status(404).json({ success: false, message: `Dish item ${item.name} not found.` });
-      }
-
-      if (!dish.available) {
-        return res.status(400).json({ success: false, message: `Dish "${dish.name}" is currently out of stock.` });
-      }
-
-      // Base price
-      let itemPrice = dish.price;
-      const itemCustomizations = [];
-
-      // Calculate customization extra costs
-      if (item.customizations && item.customizations.length > 0) {
-        for (const selectedCust of item.customizations) {
-          // Check if customization group exists in DB
-          const dbCustGroup = dish.customizations.find(g => g.name === selectedCust.name);
-          if (dbCustGroup) {
-            const dbOption = dbCustGroup.options.find(o => o.name === selectedCust.selectedOption);
-            if (dbOption) {
-              itemCustomizations.push({
-                name: selectedCust.name,
-                selectedOption: selectedCust.selectedOption,
-                extraPrice: dbOption.extraPrice,
-              });
-              itemPrice += dbOption.extraPrice;
-            }
-          }
-        }
-      }
-
-      const itemTotal = itemPrice * item.quantity;
-      addedSubtotal += itemTotal;
-
-      validatedNewItems.push({
-        dishId: dish._id,
-        name: dish.name,
-        price: dish.price, // Store base price
-        quantity: item.quantity,
-        customizations: itemCustomizations,
-        specialInstructions: item.specialInstructions || '',
-      });
-    }
-
-    // Append items to consolidated order
+    // 4. Append items to consolidated order
     order.items.push(...(validatedNewItems as any));
-    order.subtotal = Number((order.subtotal + addedSubtotal).toFixed(2));
+    order.subtotal = Number(((order.subtotal || 0) + addedSubtotal).toFixed(2));
     
-    // Calculate tax using restaurant tax rate (respect 0% tax)
     const taxRate = restaurant.taxRate !== undefined && restaurant.taxRate !== null ? Number(restaurant.taxRate) : 5;
     order.tax = Number(((order.subtotal * taxRate) / 100).toFixed(2));
     order.totalAmount = Number((order.subtotal + order.tax).toFixed(2));
 
-    if (order.status === 'served' || order.status === 'ready') {
+    if (order.status === 'served' || order.status === 'ready' || order.status === 'completed') {
       order.status = 'accepted';
     }
     await order.save();
 
-    // 6. Broadcast via Socket.io
+    // 5. Broadcast via Socket.io
     const io = req.app.get('io');
     if (io) {
-      // Notify restaurant room
       io.to(restaurantId.toString()).emit(isNew ? 'new_order' : 'order_updated', order);
       io.to(restaurantId.toString()).emit('table_status_updated', { tableNumber: order.tableNumber });
       console.log(`[Socket] Dispatched ${isNew ? 'new_order' : 'order_updated'} event to restaurant room: ${restaurantId}`);
@@ -195,6 +195,59 @@ router.post('/manual', protect, restrictTo('restaurant_admin', 'staff', 'super_a
       return res.status(404).json({ success: false, message: 'Restaurant not found.' });
     }
 
+    // 1. Validate items and calculate added subtotal BEFORE touch database sessions
+    let addedSubtotal = 0;
+    const validatedNewItems = [];
+
+    for (const item of items) {
+      if (!item.dishId) {
+        return res.status(400).json({ success: false, message: 'Dish identifier is required for all items.' });
+      }
+
+      const dish = await Dish.findById(item.dishId);
+      if (!dish) {
+        return res.status(404).json({ success: false, message: `Dish item "${item.name || item.dishId}" not found.` });
+      }
+
+      if (!dish.available) {
+        return res.status(400).json({ success: false, message: `Dish "${dish.name}" is currently marked out of stock.` });
+      }
+
+      let itemPrice = dish.price;
+      const itemCustomizations = [];
+
+      if (Array.isArray(item.customizations) && item.customizations.length > 0) {
+        for (const selectedCust of item.customizations) {
+          if (!selectedCust || !selectedCust.name || !selectedCust.selectedOption) continue;
+          const dbCustGroup = dish.customizations?.find(g => g.name === selectedCust.name);
+          if (dbCustGroup) {
+            const dbOption = dbCustGroup.options?.find(o => o.name === selectedCust.selectedOption);
+            if (dbOption) {
+              itemCustomizations.push({
+                name: selectedCust.name,
+                selectedOption: selectedCust.selectedOption,
+                extraPrice: dbOption.extraPrice || 0,
+              });
+              itemPrice += dbOption.extraPrice || 0;
+            }
+          }
+        }
+      }
+
+      const itemQty = Number(item.quantity) > 0 ? Number(item.quantity) : 1;
+      const itemTotal = itemPrice * itemQty;
+      addedSubtotal += itemTotal;
+
+      validatedNewItems.push({
+        dishId: dish._id,
+        name: dish.name,
+        price: dish.price,
+        quantity: itemQty,
+        customizations: itemCustomizations,
+        specialInstructions: item.specialInstructions || specialInstructions || '',
+      });
+    }
+
     // Default guest info if not provided
     const guestName = (customerName && customerName.trim()) ? customerName.trim() : `Table ${tableNumber} Guest`;
     let cleanedPhone = phoneNumber ? phoneNumber.replace(/\D/g, '') : '';
@@ -202,7 +255,7 @@ router.post('/manual', protect, restrictTo('restaurant_admin', 'staff', 'super_a
       cleanedPhone = '9999999999';
     }
 
-    // Get or create consolidated TableSession engine for this dining table
+    // 2. Get or create consolidated TableSession engine for this dining table
     const { order, session, isNew, isDuplicateRequest } = await getOrCreateActiveTableSession(
       restaurantId,
       tableNumber,
@@ -220,56 +273,9 @@ router.post('/manual', protect, restrictTo('restaurant_admin', 'staff', 'super_a
       });
     }
 
-    // Compute costs securely from Database pricing
-    let addedSubtotal = 0;
-    const validatedNewItems = [];
-
-    for (const item of items) {
-      const dish = await Dish.findById(item.dishId);
-      if (!dish) {
-        return res.status(404).json({ success: false, message: `Dish item "${item.name || item.dishId}" not found.` });
-      }
-
-      if (!dish.available) {
-        return res.status(400).json({ success: false, message: `Dish "${dish.name}" is currently marked out of stock.` });
-      }
-
-      let itemPrice = dish.price;
-      const itemCustomizations = [];
-
-      if (item.customizations && item.customizations.length > 0) {
-        for (const selectedCust of item.customizations) {
-          const dbCustGroup = dish.customizations.find(g => g.name === selectedCust.name);
-          if (dbCustGroup) {
-            const dbOption = dbCustGroup.options.find(o => o.name === selectedCust.selectedOption);
-            if (dbOption) {
-              itemCustomizations.push({
-                name: selectedCust.name,
-                selectedOption: selectedCust.selectedOption,
-                extraPrice: dbOption.extraPrice,
-              });
-              itemPrice += dbOption.extraPrice;
-            }
-          }
-        }
-      }
-
-      const itemTotal = itemPrice * item.quantity;
-      addedSubtotal += itemTotal;
-
-      validatedNewItems.push({
-        dishId: dish._id,
-        name: dish.name,
-        price: dish.price,
-        quantity: item.quantity,
-        customizations: itemCustomizations,
-        specialInstructions: item.specialInstructions || specialInstructions || '',
-      });
-    }
-
-    // Append items to consolidated order for this table session
+    // 3. Append items to consolidated order for this table session
     order.items.push(...(validatedNewItems as any));
-    order.subtotal = Number((order.subtotal + addedSubtotal).toFixed(2));
+    order.subtotal = Number(((order.subtotal || 0) + addedSubtotal).toFixed(2));
 
     const taxRate = restaurant.taxRate !== undefined && restaurant.taxRate !== null ? Number(restaurant.taxRate) : 5;
     order.tax = Number(((order.subtotal * taxRate) / 100).toFixed(2));
@@ -281,7 +287,7 @@ router.post('/manual', protect, restrictTo('restaurant_admin', 'staff', 'super_a
     }
     await order.save();
 
-    // Broadcast real-time Socket.IO notification to restaurant room
+    // 4. Broadcast real-time Socket.IO notification to restaurant room
     const io = req.app.get('io');
     if (io) {
       io.to(restaurantId.toString()).emit(isNew ? 'new_order' : 'order_updated', order);
