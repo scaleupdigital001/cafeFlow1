@@ -123,12 +123,18 @@ export const buildThermalReceiptHTML = (data: ThermalReceiptData): string => {
       padding: 0;
     }
     body {
-      font-family: 'Courier New', Courier, monospace;
-      font-size: 11px;
+      font-family: Arial, 'Helvetica Neue', Helvetica, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 13px;
+      font-weight: 800;
       line-height: 1.35;
       color: #000;
       background: #fff;
-      width: 74mm;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+      -webkit-font-smoothing: none;
+      -webkit-text-stroke: 0.35px #000;
+      text-rendering: optimizeLegibility;
+      width: 78mm;
       max-width: 100%;
       margin: 0 auto;
       padding: 4mm 3mm;
@@ -136,17 +142,17 @@ export const buildThermalReceiptHTML = (data: ThermalReceiptData): string => {
     }
     .text-center { text-align: center; }
     .text-right { text-align: right; }
-    .bold { font-weight: bold; }
+    .bold { font-weight: 900; }
     
     .copy-banner {
       text-align: center;
-      font-size: 12px;
-      font-weight: bold;
+      font-size: 13px;
+      font-weight: 900;
       text-transform: uppercase;
       letter-spacing: 1px;
-      padding: 2px 0;
+      padding: 3px 0;
       margin-bottom: 4px;
-      border-bottom: 1.5px solid #000;
+      border-bottom: 2px solid #000;
       page-break-inside: avoid;
     }
 
@@ -154,19 +160,21 @@ export const buildThermalReceiptHTML = (data: ThermalReceiptData): string => {
       text-align: center;
       margin-bottom: 6px;
       padding-bottom: 4px;
-      border-bottom: 1px dashed #000;
+      border-bottom: 1.5px dashed #000;
       page-break-inside: avoid;
     }
     .restaurant-name {
-      font-size: 15px;
-      font-weight: bold;
+      font-size: 17px;
+      font-weight: 900;
       text-transform: uppercase;
       margin-bottom: 2px;
       word-wrap: break-word;
       overflow-wrap: break-word;
+      letter-spacing: 0.5px;
     }
     .restaurant-info {
-      font-size: 10px;
+      font-size: 12px;
+      font-weight: 800;
       margin-bottom: 2px;
       word-wrap: break-word;
       overflow-wrap: break-word;
@@ -175,20 +183,21 @@ export const buildThermalReceiptHTML = (data: ThermalReceiptData): string => {
     .meta-table {
       width: 100%;
       margin: 6px 0;
-      font-size: 10px;
-      border-bottom: 1px dashed #000;
+      font-size: 12px;
+      font-weight: 800;
+      border-bottom: 1.5px dashed #000;
       padding-bottom: 4px;
       page-break-inside: avoid;
     }
     .meta-row {
       display: flex;
       justify-content: space-between;
-      margin-bottom: 2px;
+      margin-bottom: 3px;
     }
 
     .items-container {
       margin: 6px 0;
-      border-bottom: 1px dashed #000;
+      border-bottom: 1.5px dashed #000;
       padding-bottom: 6px;
     }
     .item-row {
@@ -199,8 +208,8 @@ export const buildThermalReceiptHTML = (data: ThermalReceiptData): string => {
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
-      font-weight: bold;
-      font-size: 11px;
+      font-weight: 900;
+      font-size: 13px;
       width: 100%;
     }
     .item-name {
@@ -212,40 +221,47 @@ export const buildThermalReceiptHTML = (data: ThermalReceiptData): string => {
       white-space: normal;
     }
     .item-qty {
-      width: 30px;
+      width: 32px;
       text-align: center;
       flex-shrink: 0;
+      font-weight: 900;
     }
     .item-total {
-      width: 75px;
+      width: 80px;
       text-align: right;
       flex-shrink: 0;
       white-space: nowrap;
+      font-weight: 900;
     }
     .item-sub-line {
-      font-size: 9.5px;
-      color: #222;
+      font-size: 11.5px;
+      color: #000;
+      font-weight: 800;
       margin-top: 1px;
     }
     .item-extra {
-      font-size: 9.5px;
+      font-size: 11.5px;
+      color: #000;
+      font-weight: 800;
       padding-left: 6px;
       font-style: italic;
       word-wrap: break-word;
       overflow-wrap: break-word;
     }
     .item-note {
-      font-size: 9.5px;
+      font-size: 11.5px;
+      color: #000;
       padding-left: 6px;
-      font-weight: bold;
+      font-weight: 900;
       word-wrap: break-word;
       overflow-wrap: break-word;
     }
 
     .totals-container {
       margin: 6px 0;
-      font-size: 11px;
-      border-bottom: 1px double #000;
+      font-size: 12px;
+      font-weight: 800;
+      border-bottom: 2px double #000;
       padding-bottom: 6px;
       page-break-inside: avoid;
     }
@@ -305,10 +321,10 @@ export const buildThermalReceiptHTML = (data: ThermalReceiptData): string => {
   </div>
 
   <div class="items-container">
-    <div style="display:flex; justify-content:space-between; font-weight:bold; font-size:10px; border-bottom:1px solid #ccc; padding-bottom:2px; margin-bottom:4px;">
+    <div style="display:flex; justify-content:space-between; font-weight:900; font-size:12px; border-bottom:1.5px solid #000; padding-bottom:3px; margin-bottom:6px; color:#000;">
       <span>ITEM</span>
-      <span style="width:30px; text-align:center;">QTY</span>
-      <span style="width:75px; text-align:right;">TOTAL</span>
+      <span style="width:32px; text-align:center;">QTY</span>
+      <span style="width:80px; text-align:right;">TOTAL</span>
     </div>
     ${itemsHtml}
   </div>
@@ -327,7 +343,7 @@ export const buildThermalReceiptHTML = (data: ThermalReceiptData): string => {
       <span>${formatAmount(data.totalAmount)}</span>
     </div>
     ${data.paymentMethod ? `
-    <div class="totals-row" style="margin-top:4px; font-size:10px;">
+    <div class="totals-row" style="margin-top:4px; font-size:12px; font-weight:900;">
       <span>Payment Status</span>
       <span class="bold" style="text-transform:uppercase">${data.paymentStatus || 'Paid'} (${data.paymentMethod === 'cash' ? 'CASH' : 'UPI'})</span>
     </div>` : ''}
