@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useCartStore, CartCustomization } from '../../../../store/cartStore';
 import api from '../../../../lib/axios';
