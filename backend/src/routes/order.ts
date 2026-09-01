@@ -182,7 +182,8 @@ router.post('/manual', protect, restrictTo('restaurant_admin', 'staff', 'super_a
       return res.status(400).json({ success: false, message: 'Restaurant identifier is required.' });
     }
 
-    const { tableNumber, customerName, phoneNumber, items, specialInstructions } = req.body;
+    const { tableNumber, customerName, phoneNumber, items, specialInstructions, clientOrderId: bodyIdempotencyKey } = req.body;
+    const clientOrderId = (bodyIdempotencyKey || req.headers['x-idempotency-key'] || '') as string;
 
     if (!tableNumber || !items || !items.length) {
       return res.status(400).json({ success: false, message: 'Table number and at least one item are required.' });
@@ -194,15 +195,33 @@ router.post('/manual', protect, restrictTo('restaurant_admin', 'staff', 'super_a
     }
 
     // Default guest info if not provided
-    const guestName = (customerName && customerName.trim()) ? customerName.trim() : 'Walk-in Guest';
+    const guestName = (customerName && customerName.trim()) ? customerName.trim() : `Table ${tableNumber} Guest`;
     let cleanedPhone = phoneNumber ? phoneNumber.replace(/\D/g, '') : '';
     if (cleanedPhone.length !== 10) {
       cleanedPhone = '9999999999';
     }
 
+    // Get or create consolidated TableSession engine for this dining table
+    const { order, session, isNew, isDuplicateRequest } = await getOrCreateActiveTableSession(
+      restaurantId,
+      tableNumber,
+      guestName,
+      cleanedPhone,
+      clientOrderId
+    );
+
+    if (isDuplicateRequest) {
+      return res.status(200).json({
+        success: true,
+        message: 'Manual order already processed (idempotent duplicate request).',
+        data: order,
+        isDuplicate: true,
+      });
+    }
+
     // Compute costs securely from Database pricing
-    let subtotal = 0;
-    const validatedItems = [];
+    let addedSubtotal = 0;
+    const validatedNewItems = [];
 
     for (const item of items) {
       const dish = await Dish.findById(item.dishId);
@@ -235,9 +254,9 @@ router.post('/manual', protect, restrictTo('restaurant_admin', 'staff', 'super_a
       }
 
       const itemTotal = itemPrice * item.quantity;
-      subtotal += itemTotal;
+      addedSubtotal += itemTotal;
 
-      validatedItems.push({
+      validatedNewItems.push({
         dishId: dish._id,
         name: dish.name,
         price: dish.price,
@@ -247,34 +266,31 @@ router.post('/manual', protect, restrictTo('restaurant_admin', 'staff', 'super_a
       });
     }
 
-    const taxRate = restaurant.taxRate !== undefined && restaurant.taxRate !== null ? Number(restaurant.taxRate) : 5;
-    const tax = Number(((subtotal * taxRate) / 100).toFixed(2));
-    const totalAmount = Number((subtotal + tax).toFixed(2));
+    // Append items to consolidated order for this table session
+    order.items.push(...(validatedNewItems as any));
+    order.subtotal = Number((order.subtotal + addedSubtotal).toFixed(2));
 
-    const order = new Order({
-      restaurantId,
-      customerName: guestName,
-      phoneNumber: cleanedPhone,
-      tableNumber: String(tableNumber),
-      items: validatedItems,
-      status: 'received',
-      subtotal,
-      tax,
-      totalAmount,
-    });
+    const taxRate = restaurant.taxRate !== undefined && restaurant.taxRate !== null ? Number(restaurant.taxRate) : 5;
+    order.tax = Number(((order.subtotal * taxRate) / 100).toFixed(2));
+    order.totalAmount = Number((order.subtotal + order.tax).toFixed(2));
+
+    // Reset status to received/accepted so kitchen sees new added items
+    if (order.status === 'served' || order.status === 'completed' || order.status === 'ready') {
+      order.status = 'received';
+    }
     await order.save();
 
     // Broadcast real-time Socket.IO notification to restaurant room
     const io = req.app.get('io');
     if (io) {
-      io.to(restaurantId.toString()).emit('new_order', order);
-      io.to(restaurantId.toString()).emit('table_status_updated', { tableNumber: String(tableNumber) });
-      console.log(`[Socket] Dispatched new manual order event to restaurant room: ${restaurantId}`);
+      io.to(restaurantId.toString()).emit(isNew ? 'new_order' : 'order_updated', order);
+      io.to(restaurantId.toString()).emit('table_status_updated', { tableNumber: order.tableNumber });
+      console.log(`[Socket] Dispatched ${isNew ? 'new_order' : 'order_updated'} manual order event for Table ${tableNumber}`);
     }
 
     return res.status(201).json({
       success: true,
-      message: 'Manual table order created successfully.',
+      message: isNew ? 'Manual table order created successfully.' : `Added items to active session for Table ${tableNumber}.`,
       data: order,
     });
   } catch (error: any) {
