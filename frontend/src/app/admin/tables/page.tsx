@@ -694,12 +694,15 @@ export default function AdminTablesPage() {
       const info = selectedTableInfo;
       let billData: any = null;
 
+      let responseOrder: Order | null = null;
+
       // Scenario B: Customer requested payment (bill is verifying)
       if (info?.matchingBill && info.matchingBill.paymentStatus === 'verifying') {
         const response = await api.post(`/bills/${info.matchingBill._id}/pay/approve`, {
           paymentMethod: info.matchingBill.paymentMethod || 'cash',
         });
         billData = response.data.data;
+        responseOrder = response.data.order || (billData?.orderId as any);
       } else {
         // Scenario A: Direct counter payment
         const response = await api.patch(`/orders/${order._id}/status`, {
@@ -707,13 +710,18 @@ export default function AdminTablesPage() {
           paymentMethod: 'cash',
         });
         billData = response.data.bill;
+        responseOrder = response.data.data;
       }
+
+      const finalOrder = responseOrder || order;
+      const activeItems = finalOrder.items && finalOrder.items.length > 0 ? finalOrder.items : order.items;
+      const activeSubtotal = finalOrder.subtotal !== undefined ? finalOrder.subtotal : (billData?.subtotal || order.subtotal || 0);
 
       const activeTaxRate = billData?.taxRate !== undefined && billData?.taxRate !== null
         ? Number(billData.taxRate)
         : (restaurant?.taxRate !== undefined && restaurant?.taxRate !== null ? Number(restaurant.taxRate) : 5);
-      const activeTax = activeTaxRate === 0 ? 0 : (billData?.tax !== undefined ? billData.tax : (order.tax || 0));
-      const activeTotal = activeTaxRate === 0 ? (order.subtotal || billData?.subtotal || 0) : (billData?.totalAmount || order.totalAmount || 0);
+      const activeTax = activeTaxRate === 0 ? 0 : (billData?.tax !== undefined ? billData.tax : (finalOrder.tax || order.tax || 0));
+      const activeTotal = activeTaxRate === 0 ? activeSubtotal : (billData?.totalAmount || finalOrder.totalAmount || order.totalAmount || 0);
 
       const receiptData: ThermalReceiptData = {
         restaurantName: restaurant?.name || 'CafeFlow Restaurant',
@@ -722,17 +730,17 @@ export default function AdminTablesPage() {
         gstNumber: (billData?.restaurantId as any)?.gstNumber || restaurant?.gstNumber || '',
         billNumber: billData?.billNumber || 'INV-COMPLETED',
         date: billData?.createdAt || new Date().toISOString(),
-        tableNumber: order.tableNumber,
-        customerName: order.customerName,
-        customerPhone: order.phoneNumber,
-        items: order.items.map((i) => ({
+        tableNumber: finalOrder.tableNumber || order.tableNumber,
+        customerName: finalOrder.customerName || order.customerName,
+        customerPhone: finalOrder.phoneNumber || order.phoneNumber,
+        items: activeItems.map((i: any) => ({
           name: i.name,
           quantity: i.quantity,
           price: i.price,
           customizations: i.customizations,
           specialInstructions: i.specialInstructions,
         })),
-        subtotal: order.subtotal || billData?.subtotal || 0,
+        subtotal: activeSubtotal,
         tax: activeTax,
         taxRate: activeTaxRate,
         totalAmount: activeTotal,
