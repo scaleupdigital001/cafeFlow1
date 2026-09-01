@@ -42,8 +42,14 @@ const getRestaurantBillsHandler = async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ success: false, message: 'User is not associated with any restaurant.' });
     }
 
-    const bills = await Bill.find({ restaurantId: req.user.restaurantId, paymentStatus: { $ne: 'void' } })
-      .populate('orderId', 'customerName phoneNumber tableNumber')
+    const { includeVoid } = req.query;
+    const queryFilter: any = { restaurantId: req.user.restaurantId };
+    if (includeVoid !== 'true') {
+      queryFilter.paymentStatus = { $ne: 'void' };
+    }
+
+    const bills = await Bill.find(queryFilter)
+      .populate('orderId', 'customerName phoneNumber tableNumber mergeNote')
       .sort({ createdAt: -1 })
       .lean();
 
