@@ -767,9 +767,11 @@ export default function AdminTablesPage() {
         });
       }
 
-      // Instantly remove completed order from activeOrders state by Order._id
-      const completedOrderIdStr = String(order._id);
-      setActiveOrders((prev) => prev.filter((o) => String(o._id) !== completedOrderIdStr));
+      // Instantly remove ALL active orders for this table from activeOrders state
+      const completedTableKey = normalizeTableKey(finalOrder.tableNumber || order.tableNumber);
+      setActiveOrders((prev) =>
+        prev.filter((o) => normalizeTableKey(o.tableNumber) !== completedTableKey)
+      );
       if (info?.matchingBill) {
         const billIdStr = String(info.matchingBill._id);
         setRecentBills((prev) => prev.filter((b) => String(b._id) !== billIdStr));

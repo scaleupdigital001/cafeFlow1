@@ -4,7 +4,9 @@ import fs from 'fs';
 import Bill from '../models/Bill';
 import Order from '../models/Order';
 import Restaurant from '../models/Restaurant';
+import TableSession from '../models/TableSession';
 import WaiterRequest from '../models/WaiterRequest';
+import { canonicalTableKey } from '../utils/tableUtils';
 import { protect, restrictTo, AuthRequest } from '../middleware/auth';
 
 const router = Router();
@@ -216,10 +218,56 @@ router.post('/:id/pay/approve', protect, restrictTo('restaurant_admin', 'staff')
       // Complete order as well if not already completed
       const order = await Order.findById(bill.orderId);
       if (order) {
-        if (order.status !== 'completed') {
-          order.status = 'completed';
-          await order.save();
+        const normTable = canonicalTableKey(order.tableNumber);
+        const otherOpenOrders = await Order.find({
+          restaurantId: order.restaurantId,
+          _id: { $ne: order._id },
+          status: { $nin: ['completed', 'cancelled'] },
+          $or: [
+            { tableNumber: order.tableNumber },
+            { tableNumber: normTable },
+            { tableNumber: `Table ${normTable}` },
+            { tableNumber: `T-${normTable}` },
+          ],
+        });
+
+        if (otherOpenOrders.length > 0) {
+          let mergedSubtotalDelta = 0;
+          for (const otherOrder of otherOpenOrders) {
+            order.items.push(...(otherOrder.items as any));
+            mergedSubtotalDelta += otherOrder.subtotal || 0;
+
+            otherOrder.status = 'cancelled';
+            otherOrder.mergeNote = `[AUTO-CONSOLIDATED]: Merged into primary Order ${order._id} at bill approval on ${new Date().toISOString()}`;
+            await otherOrder.save();
+
+            const orphanBill = await Bill.findOne({ orderId: otherOrder._id });
+            if (orphanBill) {
+              orphanBill.paymentStatus = 'void';
+              orphanBill.voidNote = `[AUTO-CONSOLIDATED]: Voided orphan bill merged into primary Order ${order._id}`;
+              await orphanBill.save();
+            }
+          }
+          order.subtotal = Number((order.subtotal + mergedSubtotalDelta).toFixed(2));
+          const restaurant = await Restaurant.findById(order.restaurantId);
+          const taxRate = restaurant?.taxRate !== undefined && restaurant?.taxRate !== null ? Number(restaurant.taxRate) : 5;
+          order.tax = Number(((order.subtotal * taxRate) / 100).toFixed(2));
+          order.totalAmount = Number((order.subtotal + order.tax).toFixed(2));
+
+          bill.subtotal = order.subtotal;
+          bill.tax = order.tax;
+          bill.totalAmount = order.totalAmount;
+          await bill.save();
         }
+
+        order.status = 'completed';
+        await order.save();
+
+        await TableSession.updateOne(
+          { restaurantId: order.restaurantId, tableNumber: normTable, status: 'active' },
+          { $set: { status: 'grace', graceEndsAt: new Date(Date.now() + 10 * 60 * 1000) } }
+        );
+
         // Automatically resolve any pending request_bill requests for this table
         await WaiterRequest.updateMany(
           { restaurantId: order.restaurantId, tableNumber: order.tableNumber, type: 'request_bill', status: 'pending' },
