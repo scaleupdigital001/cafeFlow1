@@ -7,6 +7,7 @@ import Bill from '../models/Bill';
 import TableSession from '../models/TableSession';
 import WaiterRequest from '../models/WaiterRequest';
 import { getOrCreateActiveTableSession } from '../utils/sessionManager';
+import { canonicalTableKey } from '../utils/tableUtils';
 import { generateBillPDF } from '../utils/pdf';
 import { protect, restrictTo, AuthRequest } from '../middleware/auth';
 
@@ -430,6 +431,40 @@ router.patch('/:id/status', protect, restrictTo('restaurant_admin', 'staff'), as
     // Automatically trigger Invoice Bill generation on completion
     let populatedBillData = null;
     if (status === 'completed') {
+      // Automatic Consolidation Safeguard: Merge any other open orders for this table into this primary order
+      const normTable = canonicalTableKey(order.tableNumber);
+      const otherOpenOrders = await Order.find({
+        restaurantId: order.restaurantId,
+        _id: { $ne: order._id },
+        status: { $nin: ['completed', 'cancelled'] },
+        $or: [
+          { tableNumber: order.tableNumber },
+          { tableNumber: normTable },
+          { tableNumber: `Table ${normTable}` },
+          { tableNumber: `T-${normTable}` },
+        ],
+      });
+
+      if (otherOpenOrders.length > 0) {
+        let mergedSubtotalDelta = 0;
+        for (const otherOrder of otherOpenOrders) {
+          order.items.push(...(otherOrder.items as any));
+          mergedSubtotalDelta += otherOrder.subtotal || 0;
+
+          otherOrder.status = 'cancelled';
+          otherOrder.mergeNote = `[AUTO-CONSOLIDATED]: Merged into primary Order ${order._id} at bill completion on ${new Date().toISOString()}`;
+          await otherOrder.save();
+
+          const orphanBill = await Bill.findOne({ orderId: otherOrder._id });
+          if (orphanBill) {
+            orphanBill.paymentStatus = 'void';
+            orphanBill.voidNote = `[AUTO-CONSOLIDATED]: Voided orphan bill merged into primary Order ${order._id}`;
+            await orphanBill.save();
+          }
+        }
+        order.subtotal = Number((order.subtotal + mergedSubtotalDelta).toFixed(2));
+      }
+
       let billObj = await Bill.findOne({ orderId: order._id });
       const restaurant = await Restaurant.findById(req.user?.restaurantId || order.restaurantId);
 
@@ -469,6 +504,7 @@ router.patch('/:id/status', protect, restrictTo('restaurant_admin', 'staff'), as
           }
         } else {
           // If bill exists, sync final tax and mark paid
+          billObj.subtotal = order.subtotal;
           billObj.tax = order.tax;
           billObj.totalAmount = order.totalAmount;
           billObj.paymentStatus = 'paid';
