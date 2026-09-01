@@ -17,6 +17,7 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
  * - Priority 1: Idempotency check via clientOrderId.
  * - Priority 2: Canonical table number normalization (canonicalTableKey).
  * - Priority 3: 3-State Lifecycle ('active' | 'grace' | 'closed'). Auto-reopens 'grace' sessions on new order.
+ * - Auto-Cleanup: Safely closes stale sessions whose orders are finalized, preventing E11000 duplicate key errors.
  */
 export async function getOrCreateActiveTableSession(
   restaurantId: string | mongoose.Types.ObjectId,
@@ -84,6 +85,13 @@ export async function getOrCreateActiveTableSession(
 
             transactionResult = { session: activeSession, order: existingOrder, isNew: false };
             return;
+          } else {
+            // Stale session safeguard: Linked order is completed/cancelled or deleted -> close stale session
+            await TableSession.updateOne(
+              { _id: activeSession._id },
+              { $set: { status: 'closed' } },
+              { session: mongoSession }
+            );
           }
         }
 
@@ -187,6 +195,12 @@ export async function getOrCreateActiveTableSession(
       );
 
       return { session: activeSession, order: existingOrder, isNew: false };
+    } else {
+      // Stale session safeguard on standalone fallback
+      await TableSession.updateOne(
+        { _id: activeSession._id },
+        { $set: { status: 'closed' } }
+      );
     }
   }
 
@@ -232,7 +246,12 @@ export async function getOrCreateActiveTableSession(
       });
       if (existingSession) {
         const existingOrder = await Order.findById(existingSession.orderId);
-        if (existingOrder) return { session: existingSession, order: existingOrder, isNew: false };
+        if (existingOrder && existingOrder.status !== 'completed' && existingOrder.status !== 'cancelled') {
+          return { session: existingSession, order: existingOrder, isNew: false };
+        } else {
+          await TableSession.updateOne({ _id: existingSession._id }, { $set: { status: 'closed' } });
+          return getOrCreateActiveTableSession(restaurantId, rawTableInput, customerName, phoneNumber, clientOrderId);
+        }
       }
     }
     throw err;
