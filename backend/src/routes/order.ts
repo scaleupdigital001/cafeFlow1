@@ -6,6 +6,7 @@ import Otp from '../models/Otp';
 import Bill from '../models/Bill';
 import TableSession from '../models/TableSession';
 import WaiterRequest from '../models/WaiterRequest';
+import { getOrCreateActiveTableSession } from '../utils/sessionManager';
 import { generateBillPDF } from '../utils/pdf';
 import { protect, restrictTo, AuthRequest } from '../middleware/auth';
 
@@ -15,12 +16,9 @@ const router = Router();
  * Helper to generate a unique invoice code
  */
 const generateBillNumber = (): string => {
-  const date = new Date();
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const rand = Math.floor(1000 + Math.random() * 9000);
-  return `INV-${year}${month}${day}-${rand}`;
+  const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const randomDigits = Math.floor(1000 + Math.random() * 9000);
+  return `INV-${dateStr}-${randomDigits}`;
 };
 
 /**
@@ -48,7 +46,8 @@ const getDistanceInMeters = (lat1: number, lon1: number, lat2: number, lon2: num
  */
 router.post('/', async (req, res) => {
   try {
-    const { restaurantId, customerName, phoneNumber, tableNumber, items } = req.body;
+    const { restaurantId, customerName, phoneNumber, tableNumber, items, clientOrderId: bodyIdempotencyKey } = req.body;
+    const clientOrderId = (bodyIdempotencyKey || req.headers['x-idempotency-key'] || '') as string;
 
     if (!restaurantId || !tableNumber || !items || !items.length) {
       return res.status(400).json({ success: false, message: 'Table number and order items are required.' });
@@ -63,9 +62,28 @@ router.post('/', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Restaurant not found.' });
     }
 
-    // 3. Compute costs securely from Database pricing to avoid client-side tampering
-    let subtotal = 0;
-    const validatedItems = [];
+    // 2. Priority 1 & 3: Get or create TableSession with Idempotency & 3-State Machine
+    const { order, session, isNew, isDuplicateRequest } = await getOrCreateActiveTableSession(
+      restaurantId,
+      tableNumber,
+      guestName,
+      cleanedPhone,
+      clientOrderId
+    );
+
+    // Priority 1: Idempotency protection — if duplicate clientOrderId arrives, return existing order
+    if (isDuplicateRequest) {
+      return res.status(200).json({
+        success: true,
+        message: 'Order already processed (idempotent duplicate request).',
+        data: order,
+        isDuplicate: true,
+      });
+    }
+
+    // 3. Compute costs securely from Database pricing
+    let addedSubtotal = 0;
+    const validatedNewItems = [];
 
     for (const item of items) {
       const dish = await Dish.findById(item.dishId);
@@ -101,9 +119,9 @@ router.post('/', async (req, res) => {
       }
 
       const itemTotal = itemPrice * item.quantity;
-      subtotal += itemTotal;
+      addedSubtotal += itemTotal;
 
-      validatedItems.push({
+      validatedNewItems.push({
         dishId: dish._id,
         name: dish.name,
         price: dish.price, // Store base price
@@ -113,31 +131,27 @@ router.post('/', async (req, res) => {
       });
     }
 
+    // Append items to consolidated order
+    order.items.push(...(validatedNewItems as any));
+    order.subtotal = Number((order.subtotal + addedSubtotal).toFixed(2));
+    
     // Calculate tax using restaurant tax rate (respect 0% tax)
     const taxRate = restaurant.taxRate !== undefined && restaurant.taxRate !== null ? Number(restaurant.taxRate) : 5;
-    const tax = Number(((subtotal * taxRate) / 100).toFixed(2));
-    const totalAmount = Number((subtotal + tax).toFixed(2));
+    order.tax = Number(((order.subtotal * taxRate) / 100).toFixed(2));
+    order.totalAmount = Number((order.subtotal + order.tax).toFixed(2));
 
-    // 4. Save order to database
-    const order = new Order({
-      restaurantId,
-      customerName: guestName,
-      phoneNumber: cleanedPhone,
-      tableNumber,
-      items: validatedItems,
-      status: 'received',
-      subtotal,
-      tax,
-      totalAmount,
-    });
+    if (order.status === 'served' || order.status === 'ready') {
+      order.status = 'accepted';
+    }
     await order.save();
 
     // 6. Broadcast via Socket.io
     const io = req.app.get('io');
     if (io) {
       // Notify restaurant room
-      io.to(restaurantId.toString()).emit('new_order', order);
-      console.log(`[Socket] Dispatched new_order event to restaurant room: ${restaurantId}`);
+      io.to(restaurantId.toString()).emit(isNew ? 'new_order' : 'order_updated', order);
+      io.to(restaurantId.toString()).emit('table_status_updated', { tableNumber: order.tableNumber });
+      console.log(`[Socket] Dispatched ${isNew ? 'new_order' : 'order_updated'} event to restaurant room: ${restaurantId}`);
     }
 
     return res.status(201).json({
@@ -461,6 +475,12 @@ router.patch('/:id/status', protect, restrictTo('restaurant_admin', 'staff'), as
         { status: 'resolved' }
       );
 
+      // Priority 3: Transition TableSession from 'active' to 'grace' (10-minute grace window)
+      await TableSession.updateOne(
+        { restaurantId: order.restaurantId, tableNumber: order.tableNumber, status: 'active' },
+        { $set: { status: 'grace', graceEndsAt: new Date(Date.now() + 10 * 60 * 1000) } }
+      );
+
       if (io) {
         io.to(req.user.restaurantId.toString()).emit('table_status_updated', { tableNumber: order.tableNumber });
       }
@@ -470,6 +490,58 @@ router.patch('/:id/status', protect, restrictTo('restaurant_admin', 'staff'), as
   } catch (error: any) {
     console.error('Update status error:', error);
     return res.status(500).json({ success: false, message: 'Failed to update status.', error: error.message });
+  }
+});
+
+/**
+ * @route   POST /api/sessions/:id/reopen
+ * @desc    Reopen a 'grace' or 'closed' table session back to 'active'
+ * @access  Private (Restaurant Admin / Staff)
+ */
+router.post('/sessions/:id/reopen', protect, restrictTo('restaurant_admin', 'staff'), async (req: AuthRequest, res: Response) => {
+  try {
+    const session = await TableSession.findById(req.params.id);
+    if (!session) {
+      return res.status(404).json({ success: false, message: 'Table session not found.' });
+    }
+
+    if (session.status === 'active') {
+      return res.status(400).json({ success: false, message: 'Session is already active.' });
+    }
+
+    // Reopen session to active
+    session.status = 'active';
+    session.graceEndsAt = undefined;
+    await session.save();
+
+    // Reopen linked order
+    const order = await Order.findById(session.orderId);
+    if (order && (order.status === 'completed' || order.status === 'cancelled')) {
+      order.status = 'served';
+      await order.save();
+    }
+
+    // Priority 3: Void existing bill so a fresh consolidated bill is generated at next checkout
+    const activeBill = await Bill.findOne({ orderId: session.orderId, paymentStatus: { $ne: 'void' } });
+    if (activeBill) {
+      activeBill.paymentStatus = 'void';
+      activeBill.voidNote = `[STAFF-REOPENED]: Voided because session ${session._id} was reopened by staff on ${new Date().toISOString()}`;
+      await activeBill.save();
+    }
+
+    const io = req.app.get('io');
+    if (io) {
+      io.to(session.restaurantId.toString()).emit('table_status_updated', { tableNumber: session.tableNumber });
+      if (order) io.to(session.restaurantId.toString()).emit('order_updated', order);
+    }
+
+    return res.json({
+      success: true,
+      message: 'Table session reopened successfully.',
+      data: { session, order },
+    });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: 'Failed to reopen table session.', error: error.message });
   }
 });
 

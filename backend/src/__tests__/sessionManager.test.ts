@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import TableSession from '../models/TableSession';
 import Order from '../models/Order';
 import { getOrCreateActiveTableSession } from '../utils/sessionManager';
+import { canonicalTableKey } from '../utils/tableUtils';
 
 dotenv.config();
 
@@ -53,7 +54,7 @@ async function runSessionManagerTests() {
 
     // TEST (c): Concurrent requests for the same new table (Promise.all 5 simultaneous)
     console.log('[Test C] Simulating 5 simultaneous concurrent requests for new Table T-102...');
-    const concurrentTableNum = 'T-102';
+    const concurrentTableNum = canonicalTableKey('T-102');
     await TableSession.deleteMany({ restaurantId: testRestaurantId, tableNumber: concurrentTableNum });
     await Order.deleteMany({ restaurantId: testRestaurantId, tableNumber: concurrentTableNum });
 

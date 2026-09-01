@@ -102,6 +102,7 @@ export default function CustomerMenuPage() {
   });
   const [otpLoading, setOtpLoading] = useState(false); // Used for order placement loading spinner
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const currentIdempotencyKeyRef = useRef<string | null>(null);
 
   // Waiter Assistance States
   const [isWaiterModalOpen, setIsWaiterModalOpen] = useState(false);
@@ -489,11 +490,18 @@ export default function CustomerMenuPage() {
       const guestName = customerName?.trim() || `Table ${effectiveTableNumber} Guest`;
       const cleanedPhone = phoneNumber ? phoneNumber.replace(/\D/g, '') : '';
 
+      // Priority 1: Generate or reuse clientOrderId (UUID) for idempotency across network retries
+      if (!currentIdempotencyKeyRef.current) {
+        currentIdempotencyKeyRef.current = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `cl_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      }
+      const clientOrderId = currentIdempotencyKeyRef.current;
+
       const orderData = {
         restaurantId: restaurant._id,
         customerName: guestName,
         phoneNumber: cleanedPhone,
         tableNumber: effectiveTableNumber,
+        clientOrderId,
         items: cartItems.map((item) => ({
           dishId: item.dishId,
           name: item.name,
@@ -504,8 +512,13 @@ export default function CustomerMenuPage() {
         })),
       };
 
-      const orderResponse = await api.post('/orders', orderData);
+      const orderResponse = await api.post('/orders', orderData, {
+        headers: { 'X-Idempotency-Key': clientOrderId },
+      });
       const newOrder = orderResponse.data.data;
+
+      // Clear idempotency key for next new cart submission
+      currentIdempotencyKeyRef.current = null;
 
       clearCart();
       setIsCartOpen(false);

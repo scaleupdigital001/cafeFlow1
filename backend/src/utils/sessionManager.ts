@@ -1,29 +1,31 @@
 import mongoose from 'mongoose';
 import TableSession, { ITableSession } from '../models/TableSession';
 import Order, { IOrder } from '../models/Order';
+import { canonicalTableKey } from './tableUtils';
 
 export interface GetOrCreateSessionResult {
   session: ITableSession;
   order: IOrder;
   isNew: boolean;
+  isDuplicateRequest?: boolean;
 }
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * Transaction-safe find-or-create TableSession engine.
- * - Point 1: Excludes PII in active-table route (handled in order.ts).
- * - Point 2: Complete function body with explicit error throw after max retry exhaustion.
- * - Point 3: Atomic $addToSet for updating guestNames / guestPhones without race conditions.
- * - Point 4: Initializes first guest in guestNames and guestPhones arrays on creation.
+ * - Priority 1: Idempotency check via clientOrderId.
+ * - Priority 2: Canonical table number normalization (canonicalTableKey).
+ * - Priority 3: 3-State Lifecycle ('active' | 'grace' | 'closed'). Auto-reopens 'grace' sessions on new order.
  */
 export async function getOrCreateActiveTableSession(
   restaurantId: string | mongoose.Types.ObjectId,
-  tableNumber: string,
+  rawTableInput: string,
   customerName?: string,
-  phoneNumber?: string
+  phoneNumber?: string,
+  clientOrderId?: string
 ): Promise<GetOrCreateSessionResult> {
-  const normTable = String(tableNumber).trim();
+  const normTable = canonicalTableKey(rawTableInput);
   const restId = new mongoose.Types.ObjectId(restaurantId.toString());
 
   const guestName = customerName && customerName.trim() ? customerName.trim() : `Table ${normTable} Guest`;
@@ -37,28 +39,48 @@ export async function getOrCreateActiveTableSession(
       let transactionResult: GetOrCreateSessionResult | null = null;
 
       await mongoSession.withTransaction(async () => {
-        // 1. Look for existing active session inside transaction
-        const activeSession = await TableSession.findOne({
+        // 1. Look for existing active OR grace session inside transaction
+        let activeSession = await TableSession.findOne({
           restaurantId: restId,
           tableNumber: normTable,
-          status: 'active',
+          status: { $in: ['active', 'grace'] },
         }).session(mongoSession);
 
         if (activeSession) {
+          // Priority 1: Idempotency check
+          if (clientOrderId && activeSession.processedClientOrderIds?.includes(clientOrderId)) {
+            const existingOrder = await Order.findById(activeSession.orderId).session(mongoSession);
+            if (existingOrder) {
+              transactionResult = { session: activeSession, order: existingOrder, isNew: false, isDuplicateRequest: true };
+              return;
+            }
+          }
+
           const existingOrder = await Order.findById(activeSession.orderId).session(mongoSession);
           if (existingOrder && existingOrder.status !== 'completed' && existingOrder.status !== 'cancelled') {
-            // Point 3: Atomic $addToSet update inside transaction
-            const updateFields: any = {};
-            if (guestName) updateFields.guestNames = guestName;
-            if (cleanedPhone) updateFields.guestPhones = cleanedPhone;
-
-            if (Object.keys(updateFields).length > 0) {
-              await TableSession.findOneAndUpdate(
-                { _id: activeSession._id },
-                { $addToSet: updateFields },
-                { session: mongoSession }
-              );
+            // Priority 3: Auto-reopen 'grace' session back to 'active' on new order submission
+            if (activeSession.status === 'grace') {
+              activeSession.status = 'active';
+              activeSession.graceEndsAt = undefined;
             }
+
+            // Priority 1 & 3: Atomic update of guest lists and idempotency key
+            const updateOps: any = {};
+            const addToSetFields: any = {};
+            if (guestName) addToSetFields.guestNames = guestName;
+            if (cleanedPhone) addToSetFields.guestPhones = cleanedPhone;
+            if (clientOrderId) addToSetFields.processedClientOrderIds = clientOrderId;
+
+            if (Object.keys(addToSetFields).length > 0) {
+              updateOps.$addToSet = addToSetFields;
+            }
+            updateOps.$set = { status: 'active', graceEndsAt: null };
+
+            await TableSession.findOneAndUpdate(
+              { _id: activeSession._id },
+              updateOps,
+              { session: mongoSession }
+            );
 
             transactionResult = { session: activeSession, order: existingOrder, isNew: false };
             return;
@@ -79,15 +101,16 @@ export async function getOrCreateActiveTableSession(
         });
         await newOrder.save({ session: mongoSession });
 
-        // Point 4: Include primary guest in guestNames and guestPhones arrays on creation
         const newSession = new TableSession({
           restaurantId: restId,
           tableNumber: normTable,
+          rawTableNumber: String(rawTableInput).trim(),
           status: 'active',
           customerName: guestName,
           phoneNumber: cleanedPhone,
           guestNames: guestName ? [guestName] : [],
           guestPhones: cleanedPhone ? [cleanedPhone] : [],
+          processedClientOrderIds: clientOrderId ? [clientOrderId] : [],
           orderId: newOrder._id,
         });
         await newSession.save({ session: mongoSession });
@@ -108,7 +131,6 @@ export async function getOrCreateActiveTableSession(
         errMsg.includes('standalone') ||
         err.code === 20;
 
-      // Standalone fallback: break to non-transactional atomic lock execution
       if (isStandaloneError) {
         break;
       }
@@ -135,23 +157,34 @@ export async function getOrCreateActiveTableSession(
   const activeSession = await TableSession.findOne({
     restaurantId: restId,
     tableNumber: normTable,
-    status: 'active',
+    status: { $in: ['active', 'grace'] },
   });
 
   if (activeSession) {
+    if (clientOrderId && activeSession.processedClientOrderIds?.includes(clientOrderId)) {
+      const existingOrder = await Order.findById(activeSession.orderId);
+      if (existingOrder) {
+        return { session: activeSession, order: existingOrder, isNew: false, isDuplicateRequest: true };
+      }
+    }
+
     const existingOrder = await Order.findById(activeSession.orderId);
     if (existingOrder && existingOrder.status !== 'completed' && existingOrder.status !== 'cancelled') {
-      // Point 3: Atomic $addToSet update on standalone fallback
-      const updateFields: any = {};
-      if (guestName) updateFields.guestNames = guestName;
-      if (cleanedPhone) updateFields.guestPhones = cleanedPhone;
+      const updateOps: any = {};
+      const addToSetFields: any = {};
+      if (guestName) addToSetFields.guestNames = guestName;
+      if (cleanedPhone) addToSetFields.guestPhones = cleanedPhone;
+      if (clientOrderId) addToSetFields.processedClientOrderIds = clientOrderId;
 
-      if (Object.keys(updateFields).length > 0) {
-        await TableSession.findOneAndUpdate(
-          { _id: activeSession._id },
-          { $addToSet: updateFields }
-        );
+      if (Object.keys(addToSetFields).length > 0) {
+        updateOps.$addToSet = addToSetFields;
       }
+      updateOps.$set = { status: 'active', graceEndsAt: null };
+
+      await TableSession.findOneAndUpdate(
+        { _id: activeSession._id },
+        updateOps
+      );
 
       return { session: activeSession, order: existingOrder, isNew: false };
     }
@@ -171,15 +204,16 @@ export async function getOrCreateActiveTableSession(
   await newOrder.save();
 
   try {
-    // Point 4: Include primary guest in guestNames and guestPhones arrays on creation
     const newSession = new TableSession({
       restaurantId: restId,
       tableNumber: normTable,
+      rawTableNumber: String(rawTableInput).trim(),
       status: 'active',
       customerName: guestName,
       phoneNumber: cleanedPhone,
       guestNames: guestName ? [guestName] : [],
       guestPhones: cleanedPhone ? [cleanedPhone] : [],
+      processedClientOrderIds: clientOrderId ? [clientOrderId] : [],
       orderId: newOrder._id,
     });
     await newSession.save();
@@ -194,7 +228,7 @@ export async function getOrCreateActiveTableSession(
       const existingSession = await TableSession.findOne({
         restaurantId: restId,
         tableNumber: normTable,
-        status: 'active',
+        status: { $in: ['active', 'grace'] },
       });
       if (existingSession) {
         const existingOrder = await Order.findById(existingSession.orderId);
@@ -203,7 +237,4 @@ export async function getOrCreateActiveTableSession(
     }
     throw err;
   }
-
-  // Point 2: Explicit error throw if fallback fails to return
-  throw new Error('[SessionManager] Failed to get or create table session after maximum retry attempts.');
 }
