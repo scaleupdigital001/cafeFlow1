@@ -360,13 +360,13 @@ export const buildThermalReceiptHTML = (data: ThermalReceiptData): string => {
 
 /**
  * Builds raw ESC/POS command byte array for Epson POS hardware receipt printers.
- * Enforces hardware cut: GS V 66 0 (0x1D 0x56 0x42 0x00 - Feed 3 lines & Partial/Full Cut).
+ * Specially engineered for 80mm thermal receipt printers (Font A: 48 chars/line, 44-col safe printable area).
+ * Enforces hardware cut: GS V 66 3 (0x1D 0x56 0x42 0x03 - Feed 3 lines & Cut).
  */
 export const buildEpsonEscPosBytes = (data: ThermalReceiptData, copyLabel?: string): Uint8Array => {
   const bytes: number[] = [];
   const textEncoder = new TextEncoder();
 
-  // Helper to push string bytes
   const addText = (str: string) => {
     const encoded = textEncoder.encode(str);
     for (let i = 0; i < encoded.length; i++) {
@@ -377,65 +377,127 @@ export const buildEpsonEscPosBytes = (data: ThermalReceiptData, copyLabel?: stri
   // 1. ESC @ - Initialize Printer
   bytes.push(0x1B, 0x40);
 
-  // 2. Banner Copy Label
+  // 2. ESC 7 - Set Heat Density & Heating Time (Heat dots = 288, max heat density)
+  bytes.push(0x1B, 0x37, 0x07, 0xF0, 0x02);
+
+  // 3. ESC M 0 - Select Font A (48 characters/line)
+  bytes.push(0x1B, 0x4D, 0x00);
+
+  // 4. ESC t 0 - Select Character Code Page CP437
+  bytes.push(0x1B, 0x74, 0x00);
+
+  const LINE_WIDTH = 42;
+  const DASH_LINE = '-'.repeat(LINE_WIDTH) + '\n';
+  const DOUBLE_LINE = '='.repeat(LINE_WIDTH) + '\n';
+
+  // Helper to wrap text into lines of at most LINE_WIDTH chars
+  const addWrappedText = (str: string) => {
+    if (str.length <= LINE_WIDTH) {
+      addText(`${str}\n`);
+      return;
+    }
+    const words = str.split(' ');
+    let currentLine = '';
+    for (const w of words) {
+      if ((currentLine + (currentLine ? ' ' : '') + w).length <= LINE_WIDTH) {
+        currentLine += (currentLine ? ' ' : '') + w;
+      } else {
+        if (currentLine) addText(`${currentLine}\n`);
+        currentLine = w.length > LINE_WIDTH ? w.substring(0, LINE_WIDTH) : w;
+      }
+    }
+    if (currentLine) addText(`${currentLine}\n`);
+  };
+
+  // 5. Banner Copy Label
   const label = copyLabel || data.copyLabel || 'CUSTOMER COPY';
   bytes.push(0x1B, 0x61, 0x01); // Center Align
   bytes.push(0x1B, 0x45, 0x01); // Bold On
   addText(`*** ${label.toUpperCase()} ***\n\n`);
 
-  // 3. Restaurant Header
-  addText(`${data.restaurantName.toUpperCase()}\n`);
+  // 6. Restaurant Header
+  bytes.push(0x1D, 0x21, 0x01); // Double Height
+  addWrappedText(data.restaurantName.toUpperCase());
+  bytes.push(0x1D, 0x21, 0x00); // Normal Size
   bytes.push(0x1B, 0x45, 0x00); // Bold Off
-  if (data.restaurantAddress) addText(`${data.restaurantAddress}\n`);
-  if (data.restaurantContact) addText(`Ph: ${data.restaurantContact}\n`);
-  if (data.gstNumber) addText(`GSTIN: ${data.gstNumber}\n`);
-  addText('------------------------------------------\n');
 
-  // 4. Metadata
+  if (data.restaurantAddress) addWrappedText(data.restaurantAddress);
+  if (data.restaurantContact) addWrappedText(`Ph: ${data.restaurantContact}`);
+  if (data.gstNumber) addWrappedText(`GSTIN: ${data.gstNumber}`);
+  addText(DASH_LINE);
+
+  // 7. Metadata (Left Align)
   bytes.push(0x1B, 0x61, 0x00); // Left Align
-  addText(`Bill #: ${data.billNumber}   Table: T-${data.tableNumber}\n`);
-  addText(`Date: ${new Date(data.date || Date.now()).toLocaleString()}\n`);
-  addText(`Customer: ${data.customerName || 'Guest'}\n`);
-  addText('------------------------------------------\n');
+  const billStr = `Bill #: ${data.billNumber}`;
+  const tblStr = `Table: T-${data.tableNumber}`;
+  const billMeta = billStr.padEnd(24, ' ') + tblStr.padStart(18, ' ');
+  addText(`${billMeta}\n`);
+  addWrappedText(`Date: ${new Date(data.date || Date.now()).toLocaleString()}`);
+  addWrappedText(`Customer: ${data.customerName || 'Guest'}`);
+  addText(DASH_LINE);
 
-  // 5. Items Header
-  addText('ITEM                         QTY     TOTAL\n');
-  addText('------------------------------------------\n');
+  // 8. Items Header (Deterministic 42-col table: ITEM=22, QTY=5, TOTAL=15)
+  bytes.push(0x1B, 0x45, 0x01); // Bold On
+  const headerCol = 'ITEM'.padEnd(22, ' ') + 'QTY'.padStart(5, ' ') + 'TOTAL'.padStart(15, ' ');
+  addText(`${headerCol}\n`);
+  bytes.push(0x1B, 0x45, 0x00); // Bold Off
+  addText(DASH_LINE);
 
-  // 6. Items Loop
+  // 9. Items Loop
   data.items.forEach((item) => {
     const extra = item.customizations ? item.customizations.reduce((s, c) => s + (c.extraPrice || 0), 0) : 0;
     const unitPrice = item.price + extra;
     const lineTotal = unitPrice * item.quantity;
     
-    // Pad item name to 26 chars
-    const paddedName = item.name.length > 26 ? item.name.substring(0, 26) : item.name.padEnd(26, ' ');
-    const paddedQty = `x${item.quantity}`.padStart(5, ' ');
-    const paddedTotal = `Rs.${lineTotal.toFixed(2)}`.padStart(10, ' ');
+    // Intelligently wrap/truncate item name to 22 chars
+    const itemName = item.name.length > 22 ? item.name.substring(0, 22) : item.name.padEnd(22, ' ');
+    const qtyStr = `x${item.quantity}`.padStart(5, ' ');
+    const totalStr = `Rs.${lineTotal.toFixed(2)}`.padStart(15, ' ');
     
-    addText(`${paddedName}${paddedQty}${paddedTotal}\n`);
+    addText(`${itemName}${qtyStr}${totalStr}\n`);
+    addWrappedText(`  @ Rs.${unitPrice.toFixed(2)} each`);
+
+    if (item.customizations && item.customizations.length > 0) {
+      const custStr = item.customizations.map((c) => `${c.name}: ${c.selectedOption}`).join(', ');
+      addWrappedText(`  + ${custStr}`);
+    }
+    if (item.specialInstructions) {
+      addWrappedText(`  * Note: ${item.specialInstructions}`);
+    }
   });
 
-  addText('------------------------------------------\n');
+  addText(DASH_LINE);
 
-  // 7. Totals
-  const subtotalStr = `Rs.${data.subtotal.toFixed(2)}`.padStart(12, ' ');
-  const taxStr = `Rs.${data.tax.toFixed(2)}`.padStart(12, ' ');
-  const totalStr = `Rs.${data.totalAmount.toFixed(2)}`.padStart(12, ' ');
+  // 10. Totals Section
+  const formatTotalRow = (labelStr: string, val: number): string => {
+    const valStr = `Rs.${val.toFixed(2)}`;
+    const labelPadded = labelStr.padEnd(24, ' ');
+    const valPadded = valStr.padStart(18, ' ');
+    return `${labelPadded}${valPadded}\n`;
+  };
 
-  addText(`Subtotal: ${subtotalStr}\n`);
-  addText(`Taxes:    ${taxStr}\n`);
+  addText(formatTotalRow('Subtotal:', data.subtotal));
+  addText(formatTotalRow(`Taxes (${data.taxRate || 5}%):`, data.tax));
+  addText(DASH_LINE);
+
+  // Grand Total (Bold)
   bytes.push(0x1B, 0x45, 0x01); // Bold On
-  addText(`GRAND TOTAL: ${totalStr}\n`);
-  bytes.push(0x1B, 0x45, 0x00); // Bold Off
-  addText('------------------------------------------\n');
+  const grandTotalValStr = `Rs.${data.totalAmount.toFixed(2)}`;
+  addText('GRAND TOTAL:'.padEnd(22, ' ') + grandTotalValStr.padStart(20, ' ') + '\n');
 
-  // 8. Footer & Feed & Hardware Cut
+  if (data.paymentMethod) {
+    addText(`Payment: ${(data.paymentStatus || 'PAID').toUpperCase()} (${data.paymentMethod.toUpperCase()})\n`);
+  }
+  bytes.push(0x1B, 0x45, 0x00); // Bold Off
+  addText(DOUBLE_LINE);
+
+  // 11. Footer & Feed & Hardware Cut
   bytes.push(0x1B, 0x61, 0x01); // Center Align
   addText('*** THANK YOU FOR YOUR VISIT ***\n');
-  addText('Powered by CafeFlow POS\n\n\n');
+  addText('Powered by CafeFlow POS\n\n');
 
-  // 9. GS V 66 0 (0x1D, 0x56, 0x42, 0x00): Feed 3 lines & Cut paper
+  // ESC d 3 (Feed 3 lines) + GS V 66 3 (Feed 3 lines & Partial Cut)
+  bytes.push(0x1B, 0x64, 0x03);
   bytes.push(0x1D, 0x56, 0x42, 0x03);
 
   return new Uint8Array(bytes);
