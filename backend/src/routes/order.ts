@@ -4,6 +4,7 @@ import Dish from '../models/Dish';
 import Restaurant from '../models/Restaurant';
 import Otp from '../models/Otp';
 import Bill from '../models/Bill';
+import TableSession from '../models/TableSession';
 import WaiterRequest from '../models/WaiterRequest';
 import { generateBillPDF } from '../utils/pdf';
 import { protect, restrictTo, AuthRequest } from '../middleware/auth';
@@ -294,6 +295,55 @@ const getRestaurantOrdersHandler = async (req: AuthRequest, res: Response) => {
 
 router.get('/', protect, restrictTo('restaurant_admin', 'staff'), getRestaurantOrdersHandler);
 router.get('/my-restaurant', protect, restrictTo('restaurant_admin', 'staff'), getRestaurantOrdersHandler);
+
+/**
+ * @route   GET /api/orders/active-table
+ * @desc    Fetch active running order for a dining table (Multi-device QR support)
+ *          SECURITY: Returns strictly public UI order fields. NEVER exposes customerName, phoneNumber, or guest lists.
+ * @access  Public
+ */
+router.get('/active-table', async (req, res) => {
+  try {
+    const { restaurantId, tableNumber } = req.query;
+    if (!restaurantId || !tableNumber) {
+      return res.status(400).json({ success: false, message: 'restaurantId and tableNumber query params are required.' });
+    }
+
+    const normTable = String(tableNumber).trim();
+    const session = await TableSession.findOne({
+      restaurantId,
+      tableNumber: normTable,
+      status: 'active',
+    }).lean();
+
+    if (!session) {
+      return res.json({ success: true, data: null });
+    }
+
+    const order = await Order.findById(session.orderId).lean();
+    if (!order || order.status === 'completed' || order.status === 'cancelled') {
+      return res.json({ success: true, data: null });
+    }
+
+    // SECURITY: Sanitize response object to exclude PII (customerName, phoneNumber, guestNames, guestPhones)
+    const sanitizedOrder = {
+      _id: order._id,
+      tableNumber: order.tableNumber,
+      status: order.status,
+      items: order.items,
+      subtotal: order.subtotal,
+      tax: order.tax,
+      totalAmount: order.totalAmount,
+      sessionStatus: session.status,
+      createdAt: order.createdAt,
+      updatedAt: order.updatedAt,
+    };
+
+    return res.json({ success: true, data: sanitizedOrder });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: 'Failed to fetch active table order.', error: error.message });
+  }
+});
 
 /**
  * @route   GET /api/orders/:id

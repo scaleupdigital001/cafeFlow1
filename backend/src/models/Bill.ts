@@ -8,8 +8,9 @@ export interface IBill extends Document {
   tax: number;
   totalAmount: number;
   pdfUrl?: string;
-  paymentStatus: 'pending' | 'verifying' | 'paid';
+  paymentStatus: 'pending' | 'verifying' | 'paid' | 'void';
   paymentMethod?: 'upi_link' | 'cash';
+  voidNote?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -33,8 +34,9 @@ const BillSchema: Schema = new Schema(
     tax: { type: Number, required: true },
     totalAmount: { type: Number, required: true },
     pdfUrl: { type: String },
-    paymentStatus: { type: String, enum: ['pending', 'verifying', 'paid'], default: 'pending', index: true },
+    paymentStatus: { type: String, enum: ['pending', 'verifying', 'paid', 'void'], default: 'pending', index: true },
     paymentMethod: { type: String, enum: ['upi_link', 'cash'] },
+    voidNote: { type: String },
   },
   { timestamps: true }
 );

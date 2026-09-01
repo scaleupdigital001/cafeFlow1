@@ -15,6 +15,7 @@ export interface IOrderItem {
 
 export interface IOrder extends Document {
   restaurantId: mongoose.Types.ObjectId;
+  sessionId?: mongoose.Types.ObjectId;
   customerName: string;
   phoneNumber: string;
   tableNumber: string;
@@ -24,6 +25,7 @@ export interface IOrder extends Document {
   subtotal: number;
   tax: number;
   totalAmount: number;
+  mergeNote?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -51,6 +53,11 @@ const OrderSchema: Schema = new Schema(
       required: true,
       index: true,
     },
+    sessionId: {
+      type: Schema.Types.ObjectId,
+      ref: 'TableSession',
+      index: true,
+    },
     customerName: { type: String, default: 'Guest' },
     phoneNumber: { type: String, default: '' },
     tableNumber: { type: String, required: true },
@@ -65,6 +72,7 @@ const OrderSchema: Schema = new Schema(
     subtotal: { type: Number, required: true },
     tax: { type: Number, required: true },
     totalAmount: { type: Number, required: true },
+    mergeNote: { type: String },
   },
   { timestamps: true }
 );
