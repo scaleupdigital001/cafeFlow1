@@ -24,6 +24,36 @@ export default function SettingsPage() {
   const [upiPhone, setUpiPhone] = useState('');
   const [upiQrImage, setUpiQrImage] = useState('');
 
+  // Client Handover Reset state
+  const [resetModalOpen, setResetModalOpen] = useState(false);
+  const [resetConfirmInput, setResetConfirmInput] = useState('');
+  const [resettingData, setResettingData] = useState(false);
+  const [resetSuccess, setResetSuccess] = useState<string | null>(null);
+  const [resetError, setResetError] = useState<string | null>(null);
+
+  const handleResetTenantSales = async () => {
+    if (resetConfirmInput !== 'RESET ALL TRANSACTIONS') {
+      setResetError('Please type "RESET ALL TRANSACTIONS" to confirm.');
+      return;
+    }
+    setResettingData(true);
+    setResetError(null);
+    try {
+      const res = await api.post('/data-ops/reset-tenant-sales', {
+        confirmText: 'RESET ALL TRANSACTIONS',
+      });
+      if (res.data.success) {
+        setResetSuccess('All Overview sales, orders, bills, and session history reset to ZERO!');
+        setResetModalOpen(false);
+        setResetConfirmInput('');
+      }
+    } catch (err: any) {
+      setResetError(err.response?.data?.message || 'Failed to reset sales data.');
+    } finally {
+      setResettingData(false);
+    }
+  };
+
   useEffect(() => {
     const fetchSettings = async () => {
       try {
@@ -335,6 +365,93 @@ export default function SettingsPage() {
           </CardFooter>
         </Card>
       </form>
+
+      {/* DANGER ZONE / CLIENT HANDOVER RESET */}
+      <Card className="border border-red-500/30 bg-red-950/10 dark:bg-red-950/20 shadow-md">
+        <CardHeader>
+          <CardTitle className="text-base font-serif font-black text-red-500 flex items-center gap-2">
+            Client Handover Data Reset (Start Fresh Tomorrow)
+          </CardTitle>
+          <CardDescription className="text-xs text-muted-foreground">
+            Clear all previous test orders, bills, sales revenue, and session history for this cafe before giving access to the client.
+            <strong> PRESERVES 100% of Menu items, Dishes, Prices, Tables, QR Codes, and Cafe Settings.</strong>
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {resetSuccess && (
+            <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-500 text-xs font-bold mb-3 flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4" /> {resetSuccess}
+            </div>
+          )}
+          <Button
+            type="button"
+            variant="destructive"
+            onClick={() => {
+              setResetModalOpen(true);
+              setResetError(null);
+              setResetConfirmInput('');
+            }}
+            className="text-xs font-bold gap-1.5 cursor-pointer"
+          >
+            Reset Overview & Sales Data to Zero
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* Confirmation Modal */}
+      {resetModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <Card className="w-full max-w-md border-red-500/40 bg-background shadow-2xl">
+            <CardHeader>
+              <CardTitle className="text-lg font-serif font-black text-red-500">
+                Confirm Client Handover Reset
+              </CardTitle>
+              <CardDescription className="text-xs text-muted-foreground">
+                This action will delete all historical orders, bills, and overview metrics for this cafe so sales start from <strong>Rs. 0.00 tomorrow morning</strong>.
+                Dishes, prices, tables, and settings will NOT be changed.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {resetError && (
+                <div className="p-2.5 bg-red-500/10 border border-red-500/30 rounded-xl text-red-500 text-xs font-semibold">
+                  {resetError}
+                </div>
+              )}
+              <div>
+                <label className="block text-[11px] font-bold uppercase text-muted-foreground mb-1">
+                  Type <span className="text-red-500 font-mono">RESET ALL TRANSACTIONS</span> to confirm:
+                </label>
+                <input
+                  type="text"
+                  value={resetConfirmInput}
+                  onChange={(e) => setResetConfirmInput(e.target.value)}
+                  placeholder="RESET ALL TRANSACTIONS"
+                  className="w-full text-xs font-mono bg-secondary/50 border border-border rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-red-500"
+                />
+              </div>
+            </CardContent>
+            <CardFooter className="flex justify-end gap-2 bg-secondary/30 px-6 py-3 border-t border-border/40">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setResetModalOpen(false)}
+                className="text-xs font-bold cursor-pointer"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={resettingData || resetConfirmInput !== 'RESET ALL TRANSACTIONS'}
+                onClick={handleResetTenantSales}
+                className="text-xs font-bold cursor-pointer"
+              >
+                {resettingData ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Confirm Reset to Zero'}
+              </Button>
+            </CardFooter>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

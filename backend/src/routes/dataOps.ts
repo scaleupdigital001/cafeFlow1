@@ -234,6 +234,68 @@ router.post('/clean', protect, restrictTo('super_admin'), async (req: AuthReques
 });
 
 /**
+ * @route   POST /api/data-ops/reset-tenant-sales
+ * @desc    Purge ALL transactional & sales data for a restaurant tenant for fresh client handover.
+ *          PRESERVES: Restaurant, Users/Staff, Categories, Dishes, Tables & QR codes 100%.
+ *          DELETES: Orders, Bills, TableSessions, WaiterRequests, OTPs.
+ * @access  Private (Restaurant Admin / Super Admin)
+ */
+router.post('/reset-tenant-sales', protect, restrictTo('restaurant_admin', 'super_admin'), async (req: AuthRequest, res: Response) => {
+  try {
+    const { confirmText } = req.body;
+    let restaurantId = req.user?.restaurantId || req.body.restaurantId;
+
+    if (!restaurantId && req.user?.role !== 'super_admin') {
+      return res.status(400).json({ success: false, message: 'Restaurant identifier is required.' });
+    }
+
+    if (confirmText !== 'RESET ALL TRANSACTIONS') {
+      return res.status(400).json({
+        success: false,
+        message: 'Please type "RESET ALL TRANSACTIONS" to confirm complete transactional data reset.',
+      });
+    }
+
+    const filter: any = {};
+    if (restaurantId) {
+      filter.restaurantId = restaurantId;
+    }
+
+    // Perform targeted deletion of transactional documents ONLY
+    const TableSessionModule = require('../models/TableSession').default;
+    const [delOrders, delBills, delSessions, delRequests, delOtps] = await Promise.all([
+      Order.deleteMany(filter),
+      Bill.deleteMany(filter),
+      TableSessionModule.deleteMany(filter),
+      WaiterRequest.deleteMany(filter),
+      Otp.deleteMany({}),
+    ]);
+
+    console.log(`[DataOps] Tenant transactional reset executed for restaurant: ${restaurantId || 'all'}`);
+    console.log(`  ├─ Orders deleted: ${delOrders.deletedCount}`);
+    console.log(`  ├─ Bills deleted: ${delBills.deletedCount}`);
+    console.log(`  ├─ TableSessions deleted: ${delSessions.deletedCount}`);
+    console.log(`  ├─ WaiterRequests deleted: ${delRequests.deletedCount}`);
+    console.log(`  └─ Otps deleted: ${delOtps.deletedCount}`);
+
+    return res.json({
+      success: true,
+      message: 'All transactional sales, orders, bills, and active session records reset to ZERO for client handover.',
+      purged: {
+        orders: delOrders.deletedCount || 0,
+        bills: delBills.deletedCount || 0,
+        tableSessions: delSessions.deletedCount || 0,
+        waiterRequests: delRequests.deletedCount || 0,
+        otps: delOtps.deletedCount || 0,
+      },
+    });
+  } catch (error: any) {
+    console.error('Reset tenant sales error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to reset transactional data.', error: error.message });
+  }
+});
+
+/**
  * Helper to cast ObjectIds and Date strings prior to MongoDB upsert
  */
 function prepareDoc(item: any): any {
