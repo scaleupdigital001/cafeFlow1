@@ -178,6 +178,71 @@ export default function AdminDashboardPage() {
     }
   };
 
+  const handleResetItemAdjustment = async (itemName: string) => {
+    if (!dailyReportData || isSavingAdjustment) return;
+    const targetItem = dailyReportData.items.find((i) => i.name === itemName);
+    if (!targetItem || !targetItem.isAdjusted) return;
+    const originalQty = targetItem.originalQty !== undefined ? targetItem.originalQty : targetItem.quantity;
+
+    const previousReportData = { ...dailyReportData };
+    setIsSavingAdjustment(true);
+    setAdjustmentToastError(null);
+
+    const unitPrice = targetItem.quantity > 0 ? targetItem.amount / targetItem.quantity : 0;
+    const newAmount = Number((originalQty * unitPrice).toFixed(2));
+
+    const updatedItems = dailyReportData.items.map((i) => {
+      if (i.name === itemName) {
+        return {
+          ...i,
+          quantity: originalQty,
+          amount: newAmount,
+          isAdjusted: false,
+          originalQty: undefined,
+          adjustedByName: undefined,
+          adjustedAt: undefined,
+          reason: undefined,
+        };
+      }
+      return i;
+    });
+
+    const newGrossSales = Number(updatedItems.reduce((sum, i) => sum + i.amount, 0).toFixed(2));
+    const newNetSales = Number((newGrossSales + dailyReportData.summary.taxes).toFixed(2));
+    const newTotalItems = updatedItems.reduce((sum, i) => sum + i.quantity, 0);
+    const newAov = dailyReportData.summary.totalOrders > 0
+      ? Number((newNetSales / dailyReportData.summary.totalOrders).toFixed(2))
+      : 0;
+
+    setDailyReportData({
+      ...dailyReportData,
+      summary: {
+        ...dailyReportData.summary,
+        grossSales: newGrossSales,
+        netSales: newNetSales,
+        totalItems: newTotalItems,
+        averageOrderValue: newAov,
+      },
+      items: updatedItems,
+    });
+
+    try {
+      await api.post('/analytics/daily-sales/adjust', {
+        date: selectedReportDate,
+        itemName,
+        adjustedQty: originalQty,
+        reason: 'Reset to original count',
+      });
+    } catch (err: any) {
+      console.error('Failed to reset item adjustment:', err);
+      setDailyReportData(previousReportData);
+      setAdjustmentToastError(err.response?.data?.message || 'Failed to reset adjustment.');
+      setTimeout(() => setAdjustmentToastError(null), 5000);
+    } finally {
+      setIsSavingAdjustment(false);
+    }
+  };
+
   const handleOpenAuditTrail = async () => {
     setIsAuditModalOpen(true);
     setIsLoadingAuditTrail(true);
@@ -828,7 +893,7 @@ export default function AdminDashboardPage() {
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div>
                     <h4 className="font-serif font-bold text-base text-foreground">Particulars / Item-wise Breakdown</h4>
-                    <p className="text-xs text-muted-foreground">Hover over any item quantity and click the pencil icon to audit-adjust quantity</p>
+                    <p className="text-xs text-muted-foreground">Audit item counts and remove test/unwanted orders before day-end print</p>
                   </div>
 
                   <div className="relative w-full sm:w-64">
@@ -841,6 +906,22 @@ export default function AdminDashboardPage() {
                       className="w-full text-xs bg-secondary/40 border border-border rounded-xl pl-8 pr-3 py-2 outline-none focus:ring-1 focus:ring-primary text-foreground"
                     />
                   </div>
+                </div>
+
+                {/* Audit Helper Banner */}
+                <div className="p-3 bg-amber-500/10 border border-amber-500/25 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center gap-2.5 text-amber-900 dark:text-amber-200">
+                    <Edit3 className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                    <span>
+                      <strong>End-of-Day Audit Adjustment:</strong> Click the <strong>"Edit Qty"</strong> button on any dish row below to adjust sold count. All daily totals, AOV, and thermal printouts recalculate immediately.
+                    </span>
+                  </div>
+                  <button
+                    onClick={handleOpenAuditTrail}
+                    className="px-3 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-800 dark:text-amber-200 border border-amber-500/30 rounded-lg text-[11px] font-bold cursor-pointer transition-all shrink-0 flex items-center gap-1 self-start sm:self-auto"
+                  >
+                    <History className="w-3 h-3" /> Audit Log
+                  </button>
                 </div>
 
                 {adjustmentToastError && (
@@ -856,16 +937,17 @@ export default function AdminDashboardPage() {
                   <table className="w-full text-xs text-left">
                     <thead className="bg-secondary/40 border-b border-border text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
                       <tr>
-                        <th className="py-3 px-4">#</th>
+                        <th className="py-3 px-4 w-12">#</th>
                         <th className="py-3 px-4">Particulars (Menu Item)</th>
-                        <th className="py-3 px-4 text-center">Quantity Sold</th>
-                        <th className="py-3 px-4 text-right">Total Amount (Rs.)</th>
+                        <th className="py-3 px-4 text-center w-36">Quantity Sold</th>
+                        <th className="py-3 px-4 text-right w-36">Total Amount (Rs.)</th>
+                        <th className="py-3 px-4 text-center w-40">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border/60">
                       {filteredReportItems.length === 0 ? (
                         <tr>
-                          <td colSpan={4} className="py-8 text-center text-xs text-muted-foreground">
+                          <td colSpan={5} className="py-8 text-center text-xs text-muted-foreground">
                             {itemSearchQuery ? 'No menu items matching your search.' : 'No completed sales recorded for this date.'}
                           </td>
                         </tr>
@@ -874,10 +956,10 @@ export default function AdminDashboardPage() {
                           const isEditing = editingItemName === item.name;
                           return (
                             <tr key={idx} className="hover:bg-secondary/20 transition-colors">
-                              <td className="py-2.5 px-4 font-mono text-muted-foreground text-[11px]">{idx + 1}</td>
-                              <td className="py-2.5 px-4 font-bold text-foreground">
-                                <div className="flex items-center gap-2">
-                                  <span>{item.name}</span>
+                              <td className="py-3 px-4 font-mono text-muted-foreground text-[11px]">{idx + 1}</td>
+                              <td className="py-3 px-4 font-bold text-foreground">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-sm">{item.name}</span>
                                   {item.isAdjusted && (
                                     <span
                                       className="inline-flex items-center gap-1 text-[10px] font-extrabold bg-amber-500/15 text-amber-600 dark:text-amber-400 px-2 py-0.5 rounded-md border border-amber-500/30"
@@ -889,12 +971,7 @@ export default function AdminDashboardPage() {
                                   )}
                                 </div>
                               </td>
-                              <td
-                                className="py-2.5 px-4 text-center font-bold text-foreground cursor-pointer"
-                                onClick={() => {
-                                  if (!isEditing) handleStartEdit(item);
-                                }}
-                              >
+                              <td className="py-3 px-4 text-center">
                                 {isEditing ? (
                                   <div className="flex flex-col items-center gap-1" onClick={(e) => e.stopPropagation()}>
                                     <div className="flex items-center gap-1 justify-center">
@@ -911,14 +988,14 @@ export default function AdminDashboardPage() {
                                             handleCancelEdit();
                                           }
                                         }}
-                                        className="w-16 text-center text-xs bg-background border border-primary rounded-lg py-1 outline-none font-bold text-foreground focus:ring-1 focus:ring-primary"
+                                        className="w-16 text-center text-xs bg-background border-2 border-primary rounded-lg py-1 outline-none font-black text-foreground focus:ring-1 focus:ring-primary shadow-xs"
                                         autoFocus
                                       />
                                       <button
                                         onClick={() => handleSaveItemAdjustment(item.name)}
                                         disabled={isSavingAdjustment}
-                                        className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg cursor-pointer transition-all disabled:opacity-50"
-                                        title="Confirm optimistic save"
+                                        className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg cursor-pointer transition-all disabled:opacity-50 shadow-xs"
+                                        title="Save Adjustment"
                                       >
                                         {isSavingAdjustment ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
                                       </button>
@@ -941,21 +1018,50 @@ export default function AdminDashboardPage() {
                                           handleSaveItemAdjustment(item.name);
                                         }
                                       }}
-                                      className="w-36 text-[10px] bg-background border border-border rounded-md px-2 py-0.5 text-foreground outline-none"
+                                      className="w-40 text-[10px] bg-background border border-border rounded-md px-2 py-0.5 text-foreground outline-none shadow-xs"
                                     />
                                   </div>
                                 ) : (
-                                  <div className="flex items-center justify-center gap-1.5 group">
-                                    <span className="underline decoration-dotted underline-offset-4 decoration-primary/40 group-hover:text-primary transition-colors">
-                                      {item.quantity}
-                                    </span>
-                                    <span className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 text-muted-foreground group-hover:text-primary">
-                                      <Edit3 className="w-3 h-3" />
-                                    </span>
+                                  <button
+                                    onClick={() => handleStartEdit(item)}
+                                    className="inline-flex items-center gap-1.5 px-3 py-1 bg-secondary/70 hover:bg-primary/10 hover:text-primary hover:border-primary/40 rounded-xl font-black text-foreground border border-border/70 transition-all cursor-pointer shadow-xs text-xs"
+                                    title="Click to edit quantity"
+                                  >
+                                    <span>{item.quantity}</span>
+                                    <Edit3 className="w-3 h-3 text-muted-foreground" />
+                                  </button>
+                                )}
+                              </td>
+                              <td className="py-3 px-4 text-right font-black font-sans text-foreground text-sm">
+                                Rs. {item.amount.toFixed(2)}
+                              </td>
+                              <td className="py-3 px-4 text-center">
+                                {isEditing ? (
+                                  <span className="text-[11px] font-bold text-primary animate-pulse">Editing...</span>
+                                ) : (
+                                  <div className="flex items-center justify-center gap-1.5">
+                                    <button
+                                      onClick={() => handleStartEdit(item)}
+                                      className="inline-flex items-center gap-1 px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 rounded-xl text-xs font-bold cursor-pointer transition-all shadow-xs"
+                                    >
+                                      <Edit3 className="w-3.5 h-3.5" />
+                                      <span>Edit Qty</span>
+                                    </button>
+
+                                    {item.isAdjusted && (
+                                      <button
+                                        onClick={() => handleResetItemAdjustment(item.name)}
+                                        disabled={isSavingAdjustment}
+                                        title={`Reset to original (${item.originalQty})`}
+                                        className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-secondary hover:bg-muted text-muted-foreground hover:text-foreground border border-border rounded-xl text-xs font-bold cursor-pointer transition-all"
+                                      >
+                                        <RotateCcw className="w-3 h-3" />
+                                        <span>Reset</span>
+                                      </button>
+                                    )}
                                   </div>
                                 )}
                               </td>
-                              <td className="py-2.5 px-4 text-right font-black font-sans text-foreground">Rs. {item.amount.toFixed(2)}</td>
                             </tr>
                           );
                         })
@@ -968,6 +1074,7 @@ export default function AdminDashboardPage() {
                         <td className="py-3 px-4 text-right font-black text-primary text-sm font-sans">
                           Rs. {dailyReportData.summary.netSales.toFixed(2)}
                         </td>
+                        <td className="py-3 px-4"></td>
                       </tr>
                     </tfoot>
                   </table>
