@@ -63,3 +63,21 @@ export interface Bill {
   voidNote?: string;
   createdAt: string;
 }
+
+export interface QTItem {
+  name: string;
+  quantity: number;
+  notes?: string;
+}
+
+export interface QT {
+  _id: string;
+  tenantId: string;
+  tableNumber: string;
+  orderId: string;
+  items: QTItem[];
+  status: 'pending' | 'printed' | 'served';
+  ticketNumber: string;
+  createdAt: string;
+  updatedAt?: string;
+}

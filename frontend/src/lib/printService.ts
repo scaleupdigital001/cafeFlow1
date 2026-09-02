@@ -715,3 +715,301 @@ export const printDailySalesReport = async (data: DailySalesReportData): Promise
   };
   return printSingleCopy(receiptData, 'DAILY SALES REPORT');
 };
+
+export interface QuickTicketPrintData {
+  restaurantName?: string;
+  ticketNumber: string;
+  tableNumber: string;
+  createdAt?: string;
+  items: {
+    name: string;
+    quantity: number;
+    notes?: string;
+  }[];
+}
+
+/**
+ * Builds kitchen-optimized thermal HTML markup for Kitchen Order Tickets (KOT / QT).
+ * Features large legible fonts for quantities & dish names, table banner, and excludes billing prices.
+ */
+export const buildQuickTicketHTML = (data: QuickTicketPrintData): string => {
+  const formattedTime = data.createdAt ? new Date(data.createdAt).toLocaleString('en-IN', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }) : new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
+
+  const itemsHtml = (data.items || []).map((item) => {
+    let noteHtml = '';
+    if (item.notes) {
+      noteHtml = `<div class="item-notes">* Note: ${item.notes}</div>`;
+    }
+
+    return `
+      <div class="item-row">
+        <div class="item-main">
+          <span class="item-qty">x${item.quantity}</span>
+          <span class="item-name">${item.name}</span>
+        </div>
+        ${noteHtml}
+      </div>
+    `;
+  }).join('');
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>KOT - ${data.ticketNumber}</title>
+  <style>
+    @page {
+      size: 80mm auto;
+      margin: 2mm 2mm;
+    }
+    @media print {
+      html, body {
+        width: 76mm !important;
+        max-width: 76mm !important;
+        margin: 0 auto !important;
+        padding: 1mm 1mm !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+      .no-print {
+        display: none !important;
+      }
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: Arial, 'Helvetica Neue', Helvetica, sans-serif;
+      font-size: 14px;
+      font-weight: 800;
+      line-height: 1.3;
+      color: #000;
+      background: #fff;
+      width: 78mm;
+      max-width: 100%;
+      margin: 0 auto;
+      padding: 3mm 2mm;
+    }
+    .text-center { text-align: center; }
+    .bold { font-weight: 900; }
+    
+    .kot-banner {
+      text-align: center;
+      font-size: 16px;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      padding: 4px 0;
+      margin-bottom: 4px;
+      border-bottom: 2px solid #000;
+      border-top: 2px solid #000;
+    }
+
+    .restaurant-name {
+      font-size: 15px;
+      font-weight: 900;
+      text-transform: uppercase;
+      margin-bottom: 3px;
+    }
+
+    .table-display {
+      text-align: center;
+      font-size: 24px;
+      font-weight: 900;
+      margin: 6px 0;
+      padding: 5px 0;
+      border-top: 2px solid #000;
+      border-bottom: 2px solid #000;
+      background: #f0f0f0;
+      text-transform: uppercase;
+    }
+
+    .meta-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      font-weight: 800;
+      margin: 4px 0 8px 0;
+      border-bottom: 1.5px dashed #000;
+      padding-bottom: 4px;
+    }
+
+    .items-header {
+      font-size: 13px;
+      font-weight: 900;
+      border-bottom: 1.5px solid #000;
+      padding-bottom: 4px;
+      margin-bottom: 8px;
+    }
+
+    .items-container {
+      margin: 6px 0;
+    }
+
+    .item-row {
+      margin-bottom: 10px;
+      padding-bottom: 6px;
+      border-bottom: 1px dashed #bbb;
+      page-break-inside: avoid;
+    }
+    .item-main {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+    }
+    .item-qty {
+      font-size: 20px;
+      font-weight: 900;
+      min-width: 42px;
+      background: #000;
+      color: #fff;
+      text-align: center;
+      border-radius: 4px;
+      padding: 1px 6px;
+      flex-shrink: 0;
+    }
+    .item-name {
+      font-size: 17px;
+      font-weight: 900;
+      flex: 1;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+    }
+    .item-notes {
+      font-size: 12.5px;
+      font-weight: 900;
+      margin-top: 4px;
+      margin-left: 50px;
+      padding: 3px 6px;
+      border: 1px solid #000;
+      background: #fff8e1;
+      font-style: italic;
+    }
+
+    .footer {
+      text-align: center;
+      margin-top: 12px;
+      padding-top: 6px;
+      border-top: 2px solid #000;
+      font-size: 11px;
+      font-weight: 900;
+    }
+  </style>
+</head>
+<body>
+  ${data.restaurantName ? `<div class="restaurant-name text-center">${data.restaurantName}</div>` : ''}
+  <div class="kot-banner">*** KITCHEN ORDER TICKET ***</div>
+
+  <div class="table-display">TABLE: ${data.tableNumber}</div>
+
+  <div class="meta-row">
+    <span>Ticket #: <strong>${data.ticketNumber}</strong></span>
+    <span>Time: <strong>${formattedTime}</strong></span>
+  </div>
+
+  <div class="items-header">
+    <span>QTY & DISH ITEMS</span>
+  </div>
+
+  <div class="items-container">
+    ${itemsHtml}
+  </div>
+
+  <div class="footer">
+    <div>*** END OF TICKET ***</div>
+    <div style="font-size:9px; margin-top:2px; font-weight:normal;">Powered by CafeFlow POS</div>
+  </div>
+</body>
+</html>
+  `;
+};
+
+/**
+ * Triggers thermal ticket print dialog for a Quick Ticket (KOT / QT).
+ */
+export const printQuickTicket = async (qt: any, restaurantName?: string): Promise<PrintResult> => {
+  return new Promise((resolve) => {
+    try {
+      const kotData: QuickTicketPrintData = {
+        restaurantName: restaurantName || 'CafeFlow Restaurant',
+        ticketNumber: qt.ticketNumber || 'QT-0001',
+        tableNumber: qt.tableNumber || 'N/A',
+        createdAt: qt.createdAt || new Date().toISOString(),
+        items: (qt.items || []).map((item: any) => ({
+          name: item.name,
+          quantity: item.quantity,
+          notes: item.notes,
+        })),
+      };
+
+      const htmlContent = buildQuickTicketHTML(kotData);
+
+      // Create isolated print iframe
+      const iframe = document.createElement('iframe');
+      iframe.style.position = 'fixed';
+      iframe.style.right = '0';
+      iframe.style.bottom = '0';
+      iframe.style.width = '0px';
+      iframe.style.height = '0px';
+      iframe.style.border = 'none';
+      iframe.name = `print-kot-${Date.now()}`;
+
+      document.body.appendChild(iframe);
+
+      const frameDoc = iframe.contentWindow?.document || iframe.contentDocument;
+      if (!frameDoc || !iframe.contentWindow) {
+        if (document.body.contains(iframe)) document.body.removeChild(iframe);
+        resolve({
+          success: false,
+          mode: 'browser_dialog',
+          message: 'Could not access frame context for KOT print.',
+        });
+        return;
+      }
+
+      frameDoc.open();
+      frameDoc.write(htmlContent);
+      frameDoc.close();
+
+      setTimeout(() => {
+        try {
+          iframe.contentWindow?.focus();
+          iframe.contentWindow?.print();
+
+          setTimeout(() => {
+            if (document.body.contains(iframe)) {
+              document.body.removeChild(iframe);
+            }
+          }, 2500);
+
+          resolve({
+            success: true,
+            mode: 'browser_dialog',
+            message: `KOT ${kotData.ticketNumber} dispatched to printer.`,
+          });
+        } catch (err: any) {
+          if (document.body.contains(iframe)) {
+            document.body.removeChild(iframe);
+          }
+          resolve({
+            success: false,
+            mode: 'browser_dialog',
+            message: err.message || 'Failed to print KOT.',
+          });
+        }
+      }, 350);
+    } catch (err: any) {
+      resolve({
+        success: false,
+        mode: 'browser_dialog',
+        message: err.message || 'Print error on KOT.',
+      });
+    }
+  });
+};

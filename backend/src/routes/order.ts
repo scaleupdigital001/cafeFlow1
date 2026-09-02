@@ -6,6 +6,7 @@ import Otp from '../models/Otp';
 import Bill from '../models/Bill';
 import TableSession from '../models/TableSession';
 import WaiterRequest from '../models/WaiterRequest';
+import QT from '../models/QT';
 import { getOrCreateActiveTableSession } from '../utils/sessionManager';
 import { canonicalTableKey } from '../utils/tableUtils';
 import { generateBillPDF } from '../utils/pdf';
@@ -147,11 +148,27 @@ router.post('/', async (req, res) => {
     }
     await order.save();
 
-    // 5. Broadcast via Socket.io
+    // 5. Automatically create corresponding Quick Ticket (QT / KOT)
+    let qtRecord = null;
+    try {
+      qtRecord = await QT.createForOrder({
+        tenantId: restaurantId,
+        tableNumber: order.tableNumber,
+        _id: order._id,
+        items: validatedNewItems,
+      });
+    } catch (qtErr) {
+      console.error('[QT Creation Error]:', qtErr);
+    }
+
+    // 6. Broadcast via Socket.io
     const io = req.app.get('io');
     if (io) {
       io.to(restaurantId.toString()).emit(isNew ? 'new_order' : 'order_updated', order);
       io.to(restaurantId.toString()).emit('table_status_updated', { tableNumber: order.tableNumber });
+      if (qtRecord) {
+        io.to(restaurantId.toString()).emit('new_qt', qtRecord);
+      }
       console.log(`[Socket] Dispatched ${isNew ? 'new_order' : 'order_updated'} event to restaurant room: ${restaurantId}`);
     }
 
@@ -159,6 +176,7 @@ router.post('/', async (req, res) => {
       success: true,
       message: 'Order placed successfully.',
       data: order,
+      qt: qtRecord,
     });
   } catch (error: any) {
     console.error('Order placement error:', error);
@@ -287,11 +305,27 @@ router.post('/manual', protect, restrictTo('restaurant_admin', 'staff', 'super_a
     }
     await order.save();
 
-    // 4. Broadcast real-time Socket.IO notification to restaurant room
+    // 4. Automatically create corresponding Quick Ticket (QT / KOT)
+    let qtRecord = null;
+    try {
+      qtRecord = await QT.createForOrder({
+        tenantId: restaurantId,
+        tableNumber: order.tableNumber,
+        _id: order._id,
+        items: validatedNewItems,
+      });
+    } catch (qtErr) {
+      console.error('[Manual Order QT Creation Error]:', qtErr);
+    }
+
+    // 5. Broadcast real-time Socket.IO notification to restaurant room
     const io = req.app.get('io');
     if (io) {
       io.to(restaurantId.toString()).emit(isNew ? 'new_order' : 'order_updated', order);
       io.to(restaurantId.toString()).emit('table_status_updated', { tableNumber: order.tableNumber });
+      if (qtRecord) {
+        io.to(restaurantId.toString()).emit('new_qt', qtRecord);
+      }
       console.log(`[Socket] Dispatched ${isNew ? 'new_order' : 'order_updated'} manual order event for Table ${tableNumber}`);
     }
 
@@ -299,6 +333,7 @@ router.post('/manual', protect, restrictTo('restaurant_admin', 'staff', 'super_a
       success: true,
       message: isNew ? 'Manual table order created successfully.' : `Added items to active session for Table ${tableNumber}.`,
       data: order,
+      qt: qtRecord,
     });
   } catch (error: any) {
     console.error('Manual order placement error:', error);

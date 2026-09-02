@@ -241,7 +241,17 @@ export default function AdminTablesPage() {
       }
     };
 
+    const handleNewQT = () => {
+      fetchAllData();
+    };
+
+    const handleQTStatusUpdated = () => {
+      fetchAllData();
+    };
+
     socket.on('new_order', handleNewOrder);
+    socket.on('new_qt', handleNewQT);
+    socket.on('qt_status_updated', handleQTStatusUpdated);
     socket.on('order_updated', handleOrderUpdated);
     socket.on('order_status_updated', handleOrderUpdated);
     socket.on('waiter_requested', handleWaiterRequest);
@@ -254,6 +264,8 @@ export default function AdminTablesPage() {
 
     return () => {
       socket.off('new_order', handleNewOrder);
+      socket.off('new_qt', handleNewQT);
+      socket.off('qt_status_updated', handleQTStatusUpdated);
       socket.off('order_updated', handleOrderUpdated);
       socket.off('order_status_updated', handleOrderUpdated);
       socket.off('waiter_requested', handleWaiterRequest);
@@ -426,8 +438,10 @@ export default function AdminTablesPage() {
         })),
       };
 
-      await api.post('/orders/manual', payload);
-      setManualOrderSuccess(`Order for Table ${manualOrderTable} placed successfully!`);
+      const manualRes = await api.post('/orders/manual', payload);
+      const createdQt = manualRes.data.qt;
+      const ticketLabel = createdQt?.ticketNumber ? ` Ticket ${createdQt.ticketNumber} sent to kitchen!` : ' Ticket sent to kitchen!';
+      setManualOrderSuccess(`Order for Table ${manualOrderTable} placed!${ticketLabel}`);
 
       // Refresh dashboard data instantly
       await fetchAllData();

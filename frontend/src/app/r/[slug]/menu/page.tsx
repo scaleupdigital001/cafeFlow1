@@ -72,6 +72,7 @@ export default function CustomerMenuPage() {
   const [dishes, setDishes] = useState<Dish[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [qtSuccessMessage, setQtSuccessMessage] = useState<string | null>(null);
 
   // Filter States
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
@@ -524,6 +525,13 @@ export default function CustomerMenuPage() {
         headers: { 'X-Idempotency-Key': clientOrderId },
       });
       const newOrder = orderResponse.data.data;
+      const createdQt = orderResponse.data.qt;
+
+      if (createdQt || orderResponse.data.success) {
+        const ticketLabel = createdQt?.ticketNumber ? ` Ticket ${createdQt.ticketNumber}` : '';
+        setQtSuccessMessage(`Ticket sent to kitchen!${ticketLabel}`);
+        setTimeout(() => setQtSuccessMessage(null), 6000);
+      }
 
       // Clear idempotency key for next new cart submission
       currentIdempotencyKeyRef.current = null;
@@ -1264,6 +1272,18 @@ export default function CustomerMenuPage() {
             <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
             <span>Table not detected — please rescan your table's QR code to enable ordering and table service.</span>
           </div>
+        </div>
+      )}
+
+      {qtSuccessMessage && (
+        <div className="bg-emerald-600 text-white px-4 py-2.5 text-xs font-bold flex items-center justify-between shadow-md transition-all border-b border-emerald-700">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-white shrink-0" />
+            <span>{qtSuccessMessage}</span>
+          </div>
+          <button onClick={() => setQtSuccessMessage(null)} className="p-1 hover:bg-emerald-700 rounded-full cursor-pointer">
+            <X className="w-3.5 h-3.5" />
+          </button>
         </div>
       )}
 

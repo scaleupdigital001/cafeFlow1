@@ -16,7 +16,7 @@ import {
   Sparkles, Coffee, AlertTriangle, CheckCircle2, X, Plus, Smartphone, Printer
 } from 'lucide-react';
 
-import { Order, OrderItem, WaiterRequest, Bill } from '../../types';
+import { Order, OrderItem, WaiterRequest, Bill, QT } from '../../types';
 import { formatCurrency } from '../../lib/formatters';
 
 export default function KitchenDashboard() {
@@ -25,6 +25,8 @@ export default function KitchenDashboard() {
   const restaurantId = user?.restaurantId;
 
   const [orders, setOrders] = useState<Order[]>([]);
+  const [qts, setQts] = useState<QT[]>([]);
+  const [activeViewTab, setActiveViewTab] = useState<'orders' | 'qt'>('orders');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -86,7 +88,17 @@ export default function KitchenDashboard() {
     }
   }, [user, router]);
 
-  // Load active orders and recent bills on mount
+  // Fetch QTs from backend API
+  const fetchQTs = async () => {
+    try {
+      const response = await api.get('/qt');
+      setQts(response.data.data);
+    } catch (err) {
+      console.error('Failed to fetch QTs:', err);
+    }
+  };
+
+  // Load active orders, QTs, and recent bills on mount
   useEffect(() => {
     if (!restaurantId) return;
 
@@ -107,11 +119,12 @@ export default function KitchenDashboard() {
     };
 
     fetchActiveOrders();
+    fetchQTs();
     fetchRecentBills();
     fetchActiveWaiterRequests();
   }, [restaurantId]);
 
-  // Hook socket triggers for real time order additions / modifications
+  // Hook socket triggers for real time order & QT additions / modifications
   useEffect(() => {
     if (!socket) return;
 
@@ -126,6 +139,17 @@ export default function KitchenDashboard() {
 
       // Play audio chime
       playChime();
+    });
+
+    socket.on('new_qt', (newQt: QT) => {
+      console.log('[Kitchen Socket] New Quick Ticket received:', newQt.ticketNumber);
+      playChime();
+      setQts((prev) => [newQt, ...prev.filter((q) => q._id !== newQt._id)]);
+    });
+
+    socket.on('qt_status_updated', (updatedQt: QT) => {
+      console.log('[Kitchen Socket] Quick Ticket status updated:', updatedQt.ticketNumber, updatedQt.status);
+      setQts((prev) => prev.map((q) => (q._id === updatedQt._id ? updatedQt : q)));
     });
 
     socket.on('order_updated', (updatedOrder: Order) => {
@@ -189,6 +213,8 @@ export default function KitchenDashboard() {
 
     return () => {
       socket.off('new_order');
+      socket.off('new_qt');
+      socket.off('qt_status_updated');
       socket.off('order_updated');
       socket.off('waiter_requested');
       socket.off('waiter_request_resolved');
