@@ -28,7 +28,7 @@ export default function AdminQTPage() {
   // Bind real-time socket connection
   const socket = useSocket('restaurant', restaurantId);
 
-  // Fetch QTs from API
+  // Fetch QTs from API (Initial / Explicit Refresh)
   const fetchQTs = async () => {
     setLoading(true);
     setError(null);
@@ -43,11 +43,64 @@ export default function AdminQTPage() {
     }
   };
 
+  // Silent background fetch (prevents UI flickering during automatic background refresh)
+  const fetchQTsSilent = async () => {
+    try {
+      const res = await api.get('/qt');
+      setQts(res.data.data);
+    } catch (err: any) {
+      console.error('Silent fetch QTs error:', err);
+    }
+  };
+
   useEffect(() => {
     fetchQTs();
   }, []);
 
-  // Listen for real-time Socket.IO events
+  // Visibility-aware fallback polling interval (10-second interval, pauses when tab is backgrounded)
+  useEffect(() => {
+    let timer: NodeJS.Timeout | null = null;
+
+    const startPolling = () => {
+      if (!timer) {
+        timer = setInterval(() => {
+          if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+            fetchQTsSilent();
+          }
+        }, 10000);
+      }
+    };
+
+    const stopPolling = () => {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        fetchQTsSilent(); // Immediate silent sync on tab focus
+        startPolling();
+      } else {
+        stopPolling();
+      }
+    };
+
+    startPolling();
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+
+    return () => {
+      stopPolling();
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
+    };
+  }, []);
+
+  // Listen for real-time Socket.IO events (new_qt, qt_status_updated, qt_cleared)
   useEffect(() => {
     if (!socket) return;
 
@@ -67,7 +120,7 @@ export default function AdminQTPage() {
 
     const handleQTCleared = (data: { tableNumber: string }) => {
       console.log('[QT Admin Socket] QTs cleared for table:', data?.tableNumber);
-      fetchQTs();
+      fetchQTsSilent();
     };
 
     socket.on('new_qt', handleNewQT);
@@ -79,7 +132,7 @@ export default function AdminQTPage() {
       socket.off('qt_status_updated', handleQTStatusUpdated);
       socket.off('qt_cleared', handleQTCleared);
     };
-  }, [socket, fetchQTs]);
+  }, [socket]);
 
   // Handler for marking QT as printed and launching thermal print
   const handlePrintQT = async (qt: QT) => {
