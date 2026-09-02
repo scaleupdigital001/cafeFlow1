@@ -77,7 +77,7 @@ export default function AdminDashboardPage() {
   const [isSavingAdjustment, setIsSavingAdjustment] = useState<boolean>(false);
   const [isAuditModalOpen, setIsAuditModalOpen] = useState<boolean>(false);
   const [auditTrailList, setAuditTrailList] = useState<any[]>([]);
-  const [isLoadingAuditTrail, setIsLoadingAuditTrail] = useState<boolean>(false);
+  const [adjustmentToastError, setAdjustmentToastError] = useState<string | null>(null);
 
   const handleStartEdit = (item: any) => {
     setEditingItemName(item.name);
@@ -93,23 +93,83 @@ export default function AdminDashboardPage() {
 
   const handleSaveItemAdjustment = async (itemName: string) => {
     if (editingItemQty === '' || isNaN(Number(editingItemQty)) || Number(editingItemQty) < 0) {
-      alert('Please enter a valid non-negative quantity.');
+      setAdjustmentToastError('Please enter a valid non-negative quantity.');
+      setTimeout(() => setAdjustmentToastError(null), 4000);
       return;
     }
+
+    if (isSavingAdjustment || !dailyReportData) return;
+    const newQty = Number(editingItemQty);
+    const targetItem = dailyReportData.items.find((i) => i.name === itemName);
+
+    if (!targetItem || targetItem.quantity === newQty) {
+      handleCancelEdit();
+      return;
+    }
+
     setIsSavingAdjustment(true);
+    setAdjustmentToastError(null);
+
+    // Save snapshot of previous report state for instant rollback if API fails
+    const previousReportData = { ...dailyReportData };
+
+    // 1. Compute OPTIMISTIC client-side state update immediately (0ms delay)
+    const unitPrice = targetItem.quantity > 0 ? targetItem.amount / targetItem.quantity : 0;
+    const newAmount = Number((newQty * unitPrice).toFixed(2));
+    const origQty = targetItem.isAdjusted ? targetItem.originalQty : targetItem.quantity;
+
+    const updatedItems = dailyReportData.items.map((i) => {
+      if (i.name === itemName) {
+        return {
+          ...i,
+          quantity: newQty,
+          amount: newAmount,
+          isAdjusted: true,
+          originalQty: origQty,
+          adjustedByName: user?.name || user?.username || 'Admin User',
+          adjustedAt: new Date().toISOString(),
+          reason: editingItemReason,
+        };
+      }
+      return i;
+    });
+
+    const newGrossSales = Number(updatedItems.reduce((sum, i) => sum + i.amount, 0).toFixed(2));
+    const newNetSales = Number((newGrossSales + dailyReportData.summary.taxes).toFixed(2));
+    const newTotalItems = updatedItems.reduce((sum, i) => sum + i.quantity, 0);
+    const newAov = dailyReportData.summary.totalOrders > 0
+      ? Number((newNetSales / dailyReportData.summary.totalOrders).toFixed(2))
+      : 0;
+
+    // Apply OPTIMISTIC update instantly in React UI
+    setDailyReportData({
+      ...dailyReportData,
+      summary: {
+        ...dailyReportData.summary,
+        grossSales: newGrossSales,
+        netSales: newNetSales,
+        totalItems: newTotalItems,
+        averageOrderValue: newAov,
+      },
+      items: updatedItems,
+    });
+
+    handleCancelEdit();
+
+    // 2. Perform background save API call
     try {
       await api.post('/analytics/daily-sales/adjust', {
         date: selectedReportDate,
         itemName,
-        adjustedQty: Number(editingItemQty),
+        adjustedQty: newQty,
         reason: editingItemReason,
       });
-      // Refetch daily report to recalculate item amounts and totals
-      await fetchDailySalesReport(selectedReportDate);
-      handleCancelEdit();
     } catch (err: any) {
-      console.error('Failed to save audit adjustment:', err);
-      alert(err.response?.data?.message || 'Failed to save audit adjustment.');
+      console.error('Failed to save audit adjustment, rolling back optimistic update:', err);
+      // ROLLBACK to previous state on failure
+      setDailyReportData(previousReportData);
+      setAdjustmentToastError(err.response?.data?.message || 'Network error: Failed to save adjustment.');
+      setTimeout(() => setAdjustmentToastError(null), 5000);
     } finally {
       setIsSavingAdjustment(false);
     }
@@ -780,6 +840,15 @@ export default function AdminDashboardPage() {
                   </div>
                 </div>
 
+                {adjustmentToastError && (
+                  <div className="p-3 bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 rounded-xl text-xs font-bold flex items-center justify-between animate-fade-in">
+                    <span>⚠️ {adjustmentToastError}</span>
+                    <button onClick={() => setAdjustmentToastError(null)} className="text-muted-foreground hover:text-foreground">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+
                 <div className="border border-border rounded-2xl overflow-hidden shadow-xs">
                   <table className="w-full text-xs text-left">
                     <thead className="bg-secondary/40 border-b border-border text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
@@ -817,15 +886,28 @@ export default function AdminDashboardPage() {
                                   )}
                                 </div>
                               </td>
-                              <td className="py-2.5 px-4 text-center font-bold text-foreground">
+                              <td
+                                className="py-2.5 px-4 text-center font-bold text-foreground cursor-pointer"
+                                onClick={() => {
+                                  if (!isEditing) handleStartEdit(item);
+                                }}
+                              >
                                 {isEditing ? (
-                                  <div className="flex flex-col items-center gap-1">
+                                  <div className="flex flex-col items-center gap-1" onClick={(e) => e.stopPropagation()}>
                                     <div className="flex items-center gap-1 justify-center">
                                       <input
                                         type="number"
                                         min="0"
                                         value={editingItemQty}
                                         onChange={(e) => setEditingItemQty(e.target.value === '' ? '' : Number(e.target.value))}
+                                        onKeyDown={(e) => {
+                                          if (e.key === 'Enter') {
+                                            e.preventDefault();
+                                            handleSaveItemAdjustment(item.name);
+                                          } else if (e.key === 'Escape') {
+                                            handleCancelEdit();
+                                          }
+                                        }}
                                         className="w-16 text-center text-xs bg-background border border-primary rounded-lg py-1 outline-none font-bold text-foreground focus:ring-1 focus:ring-primary"
                                         autoFocus
                                       />
@@ -833,7 +915,7 @@ export default function AdminDashboardPage() {
                                         onClick={() => handleSaveItemAdjustment(item.name)}
                                         disabled={isSavingAdjustment}
                                         className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg cursor-pointer transition-all disabled:opacity-50"
-                                        title="Save adjustment"
+                                        title="Confirm optimistic save"
                                       >
                                         {isSavingAdjustment ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
                                       </button>
@@ -850,19 +932,23 @@ export default function AdminDashboardPage() {
                                       placeholder="Reason (optional)"
                                       value={editingItemReason}
                                       onChange={(e) => setEditingItemReason(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                          e.preventDefault();
+                                          handleSaveItemAdjustment(item.name);
+                                        }
+                                      }}
                                       className="w-36 text-[10px] bg-background border border-border rounded-md px-2 py-0.5 text-foreground outline-none"
                                     />
                                   </div>
                                 ) : (
                                   <div className="flex items-center justify-center gap-1.5 group">
-                                    <span>{item.quantity}</span>
-                                    <button
-                                      onClick={() => handleStartEdit(item)}
-                                      className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-secondary rounded text-muted-foreground hover:text-primary cursor-pointer"
-                                      title="Edit Quantity (Audit Adjustment)"
-                                    >
-                                      <Edit3 className="w-3.5 h-3.5" />
-                                    </button>
+                                    <span className="underline decoration-dotted underline-offset-4 decoration-primary/40 group-hover:text-primary transition-colors">
+                                      {item.quantity}
+                                    </span>
+                                    <span className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 text-muted-foreground group-hover:text-primary">
+                                      <Edit3 className="w-3 h-3" />
+                                    </span>
                                   </div>
                                 )}
                               </td>
