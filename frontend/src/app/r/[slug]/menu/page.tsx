@@ -485,6 +485,13 @@ export default function CustomerMenuPage() {
 
         const res = await api.post(`/orders/${activeOrderId}/append`, orderData);
         const updatedOrder = res.data.data;
+        const createdQt = res.data.qt;
+
+        if (createdQt || res.data.success) {
+          const ticketLabel = createdQt?.ticketNumber ? ` Ticket ${createdQt.ticketNumber}` : '';
+          setQtSuccessMessage(`New items sent to kitchen!${ticketLabel}`);
+          setTimeout(() => setQtSuccessMessage(null), 6000);
+        }
 
         clearCart();
         setIsCartOpen(false);

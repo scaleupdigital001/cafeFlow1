@@ -1093,6 +1093,19 @@ router.post('/:id/append', async (req, res) => {
 
     await order.save();
 
+    // Automatically create corresponding Kitchen Order Ticket (KOT / QT) for newly added items
+    let qtRecord = null;
+    try {
+      qtRecord = await QT.createForOrder({
+        tenantId: order.restaurantId,
+        tableNumber: order.tableNumber,
+        _id: order._id,
+        items: validatedNewItems,
+      });
+    } catch (qtErr) {
+      console.error('[Append Order QT Creation Error]:', qtErr);
+    }
+
     // Broadcast updates via WebSockets
     const io = req.app.get('io');
     if (io) {
@@ -1100,18 +1113,24 @@ router.post('/:id/append', async (req, res) => {
       io.to(order._id.toString()).emit('order_status_updated', order);
       // Notify restaurant room
       io.to(order.restaurantId.toString()).emit('order_updated', order);
+      io.to(order.restaurantId.toString()).emit('table_status_updated', { tableNumber: order.tableNumber });
       // Emit special event for highlighting new items
       io.to(order.restaurantId.toString()).emit('order_items_appended', {
         orderId: order._id,
         tableNumber: order.tableNumber,
         newItems: validatedNewItems,
+        qt: qtRecord,
       });
+      if (qtRecord) {
+        io.to(order.restaurantId.toString()).emit('new_qt', qtRecord);
+      }
     }
 
     return res.json({
       success: true,
       message: 'Items added to order successfully.',
       data: order,
+      qt: qtRecord,
     });
   } catch (error: any) {
     console.error('Append order error:', error);
