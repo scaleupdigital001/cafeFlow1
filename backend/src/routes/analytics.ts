@@ -108,8 +108,64 @@ router.get('/overview', protect, restrictTo('restaurant_admin'), async (req: Aut
       ]),
     ]);
 
-    const totalRevenue = totalRevenueAggregation[0]?.total || 0;
-    const todayRevenue = todayRevenueAggregation[0]?.total || 0;
+    const [rawTodayBills, todayAdjustments] = await Promise.all([
+      Bill.find({
+        restaurantId,
+        paymentStatus: 'paid',
+        updatedAt: { $gte: startOfToday, $lte: new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999) },
+      }).populate('orderId').lean(),
+      ReportAdjustment.find({ 
+        tenantId: restaurantId, 
+        reportDate: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}` 
+      }).lean(),
+    ]);
+
+    const todayBills = rawTodayBills.filter(
+      (b) => b.paymentStatus === 'paid' && b.orderId && (b.orderId as any).status === 'completed'
+    );
+
+    let todayRevenue = todayRevenueAggregation[0]?.total || 0;
+    if (todayBills.length > 0) {
+      const todayItemMap = new Map<string, { quantity: number; amount: number }>();
+      todayBills.forEach((bill: any) => {
+        const order = bill.orderId;
+        if (order && Array.isArray(order.items)) {
+          order.items.forEach((item: any) => {
+            const extraPrice = Array.isArray(item.customizations)
+              ? item.customizations.reduce((sum: number, c: any) => sum + (c.extraPrice || 0), 0)
+              : 0;
+            const unitPrice = (item.price || 0) + extraPrice;
+            const itemTotal = unitPrice * (item.quantity || 1);
+            const existing = todayItemMap.get(item.name) || { quantity: 0, amount: 0 };
+            todayItemMap.set(item.name, {
+              quantity: existing.quantity + (item.quantity || 1),
+              amount: Number((existing.amount + itemTotal).toFixed(2)),
+            });
+          });
+        }
+      });
+
+      const adjMap = new Map<string, number>();
+      todayAdjustments.forEach((adj) => adjMap.set(adj.itemName, adj.adjustedQty));
+
+      let adjustedTodayGross = 0;
+      todayItemMap.forEach((val, name) => {
+        if (adjMap.has(name)) {
+          const adjQty = adjMap.get(name)!;
+          const unitPrice = val.quantity > 0 ? val.amount / val.quantity : 0;
+          adjustedTodayGross += Number((adjQty * unitPrice).toFixed(2));
+        } else {
+          adjustedTodayGross += val.amount;
+        }
+      });
+
+      const todayTaxes = Number(todayBills.reduce((sum: number, b: any) => sum + (b.tax || 0), 0).toFixed(2));
+      todayRevenue = Number((adjustedTodayGross + todayTaxes).toFixed(2));
+    }
+
+    const rawTotal = totalRevenueAggregation[0]?.total || 0;
+    const rawToday = todayRevenueAggregation[0]?.total || 0;
+    const totalRevenue = Number((rawTotal - rawToday + todayRevenue).toFixed(2));
 
     return res.json({
       success: true,

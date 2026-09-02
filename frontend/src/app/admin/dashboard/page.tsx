@@ -113,8 +113,9 @@ export default function AdminDashboardPage() {
     setIsSavingAdjustment(true);
     setAdjustmentToastError(null);
 
-    // Save snapshot of previous report state for instant rollback if API fails
+    // Save snapshot of previous report state and cards for instant rollback if API fails
     const previousReportData = { ...dailyReportData };
+    const previousCards = cards ? { ...cards } : null;
 
     // 1. Compute OPTIMISTIC client-side state update immediately (0ms delay)
     const unitPrice = targetItem.quantity > 0 ? targetItem.amount / targetItem.quantity : 0;
@@ -157,6 +158,16 @@ export default function AdminDashboardPage() {
       items: updatedItems,
     });
 
+    // Also update Today's Revenue and Total Revenue overview cards instantly if today's date is adjusted
+    if (selectedReportDate === todayStr) {
+      const revenueDelta = Number((newNetSales - dailyReportData.summary.netSales).toFixed(2));
+      setCards((prev) => prev ? {
+        ...prev,
+        todayRevenue: newNetSales,
+        totalRevenue: Number((prev.totalRevenue + revenueDelta).toFixed(2)),
+      } : prev);
+    }
+
     handleCancelEdit();
 
     // 2. Perform background save API call
@@ -171,6 +182,7 @@ export default function AdminDashboardPage() {
       console.error('Failed to save audit adjustment, rolling back optimistic update:', err);
       // ROLLBACK to previous state on failure
       setDailyReportData(previousReportData);
+      if (previousCards) setCards(previousCards);
       setAdjustmentToastError(err.response?.data?.message || 'Network error: Failed to save adjustment.');
       setTimeout(() => setAdjustmentToastError(null), 5000);
     } finally {
@@ -185,6 +197,7 @@ export default function AdminDashboardPage() {
     const originalQty = targetItem.originalQty !== undefined ? targetItem.originalQty : targetItem.quantity;
 
     const previousReportData = { ...dailyReportData };
+    const previousCards = cards ? { ...cards } : null;
     setIsSavingAdjustment(true);
     setAdjustmentToastError(null);
 
@@ -226,6 +239,16 @@ export default function AdminDashboardPage() {
       items: updatedItems,
     });
 
+    // Also update Today's Revenue and Total Revenue overview cards instantly on reset
+    if (selectedReportDate === todayStr) {
+      const revenueDelta = Number((newNetSales - dailyReportData.summary.netSales).toFixed(2));
+      setCards((prev) => prev ? {
+        ...prev,
+        todayRevenue: newNetSales,
+        totalRevenue: Number((prev.totalRevenue + revenueDelta).toFixed(2)),
+      } : prev);
+    }
+
     try {
       await api.post('/analytics/daily-sales/adjust', {
         date: selectedReportDate,
@@ -236,6 +259,7 @@ export default function AdminDashboardPage() {
     } catch (err: any) {
       console.error('Failed to reset item adjustment:', err);
       setDailyReportData(previousReportData);
+      if (previousCards) setCards(previousCards);
       setAdjustmentToastError(err.response?.data?.message || 'Failed to reset adjustment.');
       setTimeout(() => setAdjustmentToastError(null), 5000);
     } finally {
@@ -371,6 +395,21 @@ export default function AdminDashboardPage() {
       fetchDailySalesReport(selectedReportDate);
     }
   }, [selectedReportDate, mounted]);
+
+  // Keep Today's Revenue and Total Revenue cards synchronized with Today's Sales Report adjustments
+  useEffect(() => {
+    if (cards && dailyReportData && dailyReportData.date === todayStr) {
+      const reportNetSales = dailyReportData.summary.netSales;
+      if (cards.todayRevenue !== reportNetSales) {
+        const delta = Number((reportNetSales - cards.todayRevenue).toFixed(2));
+        setCards((prev) => prev ? {
+          ...prev,
+          todayRevenue: reportNetSales,
+          totalRevenue: Number((prev.totalRevenue + delta).toFixed(2)),
+        } : prev);
+      }
+    }
+  }, [dailyReportData, todayStr]);
 
   const handlePrevDay = () => {
     const d = new Date(selectedReportDate);
