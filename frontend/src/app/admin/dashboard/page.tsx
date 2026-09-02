@@ -6,7 +6,7 @@ import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '../..
 import { 
   Loader2, TrendingUp, DollarSign, ShoppingBag, Layers, Star, Info, 
   Download, AlertTriangle, Printer, Calendar, ChevronLeft, ChevronRight, 
-  FileText, CheckCircle2, X, Search, Sparkles, Receipt
+  FileText, CheckCircle2, X, Search, Sparkles, Receipt, Edit3, Check, History, RotateCcw
 } from 'lucide-react';
 import { printDailySalesReport, DailySalesReportData } from '../../../lib/printService';
 import dynamic from 'next/dynamic';
@@ -69,6 +69,68 @@ export default function AdminDashboardPage() {
   const [isFullReportModalOpen, setIsFullReportModalOpen] = useState(false);
   const [isPrintingReport, setIsPrintingReport] = useState(false);
   const [itemSearchQuery, setItemSearchQuery] = useState('');
+
+  // Audit Adjustment states
+  const [editingItemName, setEditingItemName] = useState<string | null>(null);
+  const [editingItemQty, setEditingItemQty] = useState<number | ''>('');
+  const [editingItemReason, setEditingItemReason] = useState<string>('');
+  const [isSavingAdjustment, setIsSavingAdjustment] = useState<boolean>(false);
+  const [isAuditModalOpen, setIsAuditModalOpen] = useState<boolean>(false);
+  const [auditTrailList, setAuditTrailList] = useState<any[]>([]);
+  const [isLoadingAuditTrail, setIsLoadingAuditTrail] = useState<boolean>(false);
+
+  const handleStartEdit = (item: any) => {
+    setEditingItemName(item.name);
+    setEditingItemQty(item.quantity);
+    setEditingItemReason(item.reason || '');
+  };
+
+  const handleCancelEdit = () => {
+    setEditingItemName(null);
+    setEditingItemQty('');
+    setEditingItemReason('');
+  };
+
+  const handleSaveItemAdjustment = async (itemName: string) => {
+    if (editingItemQty === '' || isNaN(Number(editingItemQty)) || Number(editingItemQty) < 0) {
+      alert('Please enter a valid non-negative quantity.');
+      return;
+    }
+    setIsSavingAdjustment(true);
+    try {
+      await api.post('/analytics/daily-sales/adjust', {
+        date: selectedReportDate,
+        itemName,
+        adjustedQty: Number(editingItemQty),
+        reason: editingItemReason,
+      });
+      // Refetch daily report to recalculate item amounts and totals
+      await fetchDailySalesReport(selectedReportDate);
+      handleCancelEdit();
+    } catch (err: any) {
+      console.error('Failed to save audit adjustment:', err);
+      alert(err.response?.data?.message || 'Failed to save audit adjustment.');
+    } finally {
+      setIsSavingAdjustment(false);
+    }
+  };
+
+  const handleOpenAuditTrail = async () => {
+    setIsAuditModalOpen(true);
+    setIsLoadingAuditTrail(true);
+    try {
+      const res = await api.get('/analytics/daily-sales/audit-trail', {
+        params: { date: selectedReportDate },
+      });
+      if (res.data.success) {
+        setAuditTrailList(res.data.data || []);
+      }
+    } catch (err: any) {
+      console.error('Failed to fetch audit trail:', err);
+    } finally {
+      setIsLoadingAuditTrail(false);
+    }
+  };
 
   const [startDate, setStartDate] = useState(() => {
     const d = new Date();
@@ -643,6 +705,15 @@ export default function AdminDashboardPage() {
 
               <div className="flex items-center gap-2">
                 <button
+                  onClick={handleOpenAuditTrail}
+                  className="px-3.5 py-2 bg-secondary hover:bg-muted text-foreground rounded-xl text-xs font-bold cursor-pointer transition-all flex items-center gap-1.5 border border-border"
+                  title="View Audit Trail Log"
+                >
+                  <History className="w-4 h-4 text-muted-foreground" />
+                  <span>Audit Log</span>
+                </button>
+
+                <button
                   onClick={handlePrintDailyReport}
                   disabled={isPrintingReport}
                   className="px-3.5 py-2 bg-primary hover:bg-primary/90 text-white rounded-xl text-xs font-bold cursor-pointer transition-all flex items-center gap-1.5 shadow-sm disabled:opacity-60"
@@ -694,7 +765,7 @@ export default function AdminDashboardPage() {
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div>
                     <h4 className="font-serif font-bold text-base text-foreground">Particulars / Item-wise Breakdown</h4>
-                    <p className="text-xs text-muted-foreground">Consolidated quantity and sales per menu item</p>
+                    <p className="text-xs text-muted-foreground">Hover over any item quantity and click the pencil icon to audit-adjust quantity</p>
                   </div>
 
                   <div className="relative w-full sm:w-64">
@@ -727,14 +798,78 @@ export default function AdminDashboardPage() {
                           </td>
                         </tr>
                       ) : (
-                        filteredReportItems.map((item, idx) => (
-                          <tr key={idx} className="hover:bg-secondary/20 transition-colors">
-                            <td className="py-2.5 px-4 font-mono text-muted-foreground text-[11px]">{idx + 1}</td>
-                            <td className="py-2.5 px-4 font-bold text-foreground">{item.name}</td>
-                            <td className="py-2.5 px-4 text-center font-bold text-foreground">{item.quantity}</td>
-                            <td className="py-2.5 px-4 text-right font-black font-sans text-foreground">Rs. {item.amount.toFixed(2)}</td>
-                          </tr>
-                        ))
+                        filteredReportItems.map((item, idx) => {
+                          const isEditing = editingItemName === item.name;
+                          return (
+                            <tr key={idx} className="hover:bg-secondary/20 transition-colors">
+                              <td className="py-2.5 px-4 font-mono text-muted-foreground text-[11px]">{idx + 1}</td>
+                              <td className="py-2.5 px-4 font-bold text-foreground">
+                                <div className="flex items-center gap-2">
+                                  <span>{item.name}</span>
+                                  {item.isAdjusted && (
+                                    <span
+                                      className="inline-flex items-center gap-1 text-[10px] font-extrabold bg-amber-500/15 text-amber-600 dark:text-amber-400 px-2 py-0.5 rounded-md border border-amber-500/30"
+                                      title={`Audit adjusted from ${item.originalQty} by ${item.adjustedByName || 'Admin'}`}
+                                    >
+                                      <Edit3 className="w-3 h-3" />
+                                      <span>Adjusted (was {item.originalQty})</span>
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-4 text-center font-bold text-foreground">
+                                {isEditing ? (
+                                  <div className="flex flex-col items-center gap-1">
+                                    <div className="flex items-center gap-1 justify-center">
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        value={editingItemQty}
+                                        onChange={(e) => setEditingItemQty(e.target.value === '' ? '' : Number(e.target.value))}
+                                        className="w-16 text-center text-xs bg-background border border-primary rounded-lg py-1 outline-none font-bold text-foreground focus:ring-1 focus:ring-primary"
+                                        autoFocus
+                                      />
+                                      <button
+                                        onClick={() => handleSaveItemAdjustment(item.name)}
+                                        disabled={isSavingAdjustment}
+                                        className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg cursor-pointer transition-all disabled:opacity-50"
+                                        title="Save adjustment"
+                                      >
+                                        {isSavingAdjustment ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                                      </button>
+                                      <button
+                                        onClick={handleCancelEdit}
+                                        className="p-1.5 bg-secondary hover:bg-muted text-muted-foreground hover:text-foreground rounded-lg cursor-pointer transition-all"
+                                        title="Cancel"
+                                      >
+                                        <X className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                    <input
+                                      type="text"
+                                      placeholder="Reason (optional)"
+                                      value={editingItemReason}
+                                      onChange={(e) => setEditingItemReason(e.target.value)}
+                                      className="w-36 text-[10px] bg-background border border-border rounded-md px-2 py-0.5 text-foreground outline-none"
+                                    />
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center justify-center gap-1.5 group">
+                                    <span>{item.quantity}</span>
+                                    <button
+                                      onClick={() => handleStartEdit(item)}
+                                      className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-secondary rounded text-muted-foreground hover:text-primary cursor-pointer"
+                                      title="Edit Quantity (Audit Adjustment)"
+                                    >
+                                      <Edit3 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                )}
+                              </td>
+                              <td className="py-2.5 px-4 text-right font-black font-sans text-foreground">Rs. {item.amount.toFixed(2)}</td>
+                            </tr>
+                          );
+                        })
                       )}
                     </tbody>
                     <tfoot className="bg-secondary/30 border-t-2 border-border font-bold text-xs">
@@ -817,6 +952,74 @@ export default function AdminDashboardPage() {
                   <span>Print POS Report</span>
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Audit Trail Modal */}
+      {isAuditModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-card border border-border rounded-3xl w-full max-w-lg shadow-2xl flex flex-col max-h-[85vh] overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="p-4 border-b border-border flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <History className="w-5 h-5 text-primary" />
+                <h3 className="font-serif font-bold text-lg text-foreground">Sales Report Audit Trail Log</h3>
+              </div>
+              <button
+                onClick={() => setIsAuditModalOpen(false)}
+                className="p-1.5 rounded-full bg-secondary text-muted-foreground hover:text-foreground cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 flex-1 overflow-y-auto space-y-3">
+              <p className="text-xs text-muted-foreground">
+                History of manual quantity adjustments made for <span className="font-bold text-foreground">{selectedReportDate}</span>. Raw order database records remain untouched.
+              </p>
+
+              {isLoadingAuditTrail ? (
+                <div className="flex justify-center items-center py-8">
+                  <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                </div>
+              ) : auditTrailList.length === 0 ? (
+                <div className="text-center py-8 text-xs text-muted-foreground border border-dashed border-border rounded-2xl">
+                  No audit adjustments recorded for this date.
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {auditTrailList.map((log: any, idx: number) => (
+                    <div key={idx} className="p-3.5 bg-secondary/30 border border-border/80 rounded-2xl text-xs space-y-1.5">
+                      <div className="flex justify-between items-center">
+                        <span className="font-bold text-foreground text-sm">{log.itemName}</span>
+                        <span className="text-[10px] font-semibold text-muted-foreground">
+                          {new Date(log.adjustedAt || log.updatedAt).toLocaleString('en-IN')}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="text-muted-foreground">Quantity Changed:</span>
+                        <span className="font-mono bg-destructive/10 text-destructive px-1.5 py-0.5 rounded font-bold">{log.originalQty}</span>
+                        <span className="text-muted-foreground">→</span>
+                        <span className="font-mono bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 rounded font-bold">{log.adjustedQty}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-[11px] text-muted-foreground pt-1 border-t border-border/40">
+                        <span>Adjusted by: <strong className="text-foreground">{log.adjustedByName || 'Admin'}</strong></span>
+                        {log.reason && <span className="italic truncate max-w-[180px]">"{log.reason}"</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-border flex justify-end">
+              <button
+                onClick={() => setIsAuditModalOpen(false)}
+                className="px-4 py-2 bg-primary text-white rounded-xl text-xs font-bold cursor-pointer"
+              >
+                Done
+              </button>
             </div>
           </div>
         </div>

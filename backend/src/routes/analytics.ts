@@ -3,6 +3,7 @@ import Order from '../models/Order';
 import Table from '../models/Table';
 import Bill from '../models/Bill';
 import Restaurant from '../models/Restaurant';
+import ReportAdjustment from '../models/ReportAdjustment';
 import { protect, restrictTo, AuthRequest } from '../middleware/auth';
 
 const router = Router();
@@ -386,9 +387,39 @@ router.get('/daily-sales', protect, restrictTo('restaurant_admin', 'staff'), asy
       }
     });
 
-    const items = Array.from(itemMap.values()).sort((a, b) => b.quantity - a.quantity || a.name.localeCompare(b.name));
+    const rawItems = Array.from(itemMap.values()).sort((a, b) => b.quantity - a.quantity || a.name.localeCompare(b.name));
 
-    // 4. Payment breakdown
+    // 4. Fetch audit adjustments for this date
+    const adjustments = await ReportAdjustment.find({ tenantId: restaurantId, reportDate: targetDateStr }).lean();
+    const adjMap = new Map<string, any>();
+    adjustments.forEach((adj) => adjMap.set(adj.itemName, adj));
+
+    // Apply adjustments on top of raw items
+    const items = rawItems.map((rawItem) => {
+      const adj = adjMap.get(rawItem.name);
+      if (!adj) {
+        return { ...rawItem, isAdjusted: false };
+      }
+      const unitPrice = rawItem.quantity > 0 ? rawItem.amount / rawItem.quantity : 0;
+      const adjustedAmount = Number((adj.adjustedQty * unitPrice).toFixed(2));
+
+      return {
+        ...rawItem,
+        isAdjusted: true,
+        originalQty: adj.originalQty,
+        quantity: adj.adjustedQty,
+        amount: adjustedAmount,
+        adjustedByName: adj.adjustedByName,
+        adjustedAt: adj.adjustedAt,
+        reason: adj.reason || '',
+      };
+    });
+
+    // Recompute total items count & gross sales based on adjusted items
+    const adjustedTotalItemsCount = items.reduce((sum, item) => sum + item.quantity, 0);
+    const adjustedGrossSales = Number(items.reduce((sum, item) => sum + item.amount, 0).toFixed(2));
+
+    // 5. Payment breakdown
     let cashAmount = 0;
     let cashCount = 0;
     let upiAmount = 0;
@@ -417,11 +448,11 @@ router.get('/daily-sales', protect, restrictTo('restaurant_admin', 'staff'), asy
       payments.push({ method: 'other', label: 'Other', count: otherCount, amount: Number(otherAmount.toFixed(2)) });
     }
 
-    // 5. Summary metrics
+    // 6. Summary metrics
     const totalOrders = bills.length;
-    const grossSales = Number(bills.reduce((sum: number, b: any) => sum + (b.subtotal || 0), 0).toFixed(2));
     const taxes = Number(bills.reduce((sum: number, b: any) => sum + (b.tax || 0), 0).toFixed(2));
-    const netSales = Number(bills.reduce((sum: number, b: any) => sum + (b.totalAmount || 0), 0).toFixed(2));
+    const grossSales = adjustedGrossSales;
+    const netSales = Number((adjustedGrossSales + taxes).toFixed(2));
     const averageOrderValue = totalOrders > 0 ? Number((netSales / totalOrders).toFixed(2)) : 0;
 
     const dateObj = new Date(year, month, day);
@@ -462,16 +493,120 @@ router.get('/daily-sales', protect, restrictTo('restaurant_admin', 'staff'), asy
           completedOrders: completedOrdersCount,
           cancelledOrders: cancelledOrdersCount,
           allOrders: allOrdersCount,
-          totalItems: totalItemsCount,
+          totalItems: adjustedTotalItemsCount,
           averageOrderValue,
         },
         items,
         payments,
+        adjustments,
       },
     });
   } catch (error: any) {
     console.error('Daily sales report aggregation error:', error);
     return res.status(500).json({ success: false, message: 'Failed to aggregate daily sales report.', error: error.message });
+  }
+});
+
+/**
+ * @route   POST /api/analytics/daily-sales/adjust
+ * @desc    Save an audit adjustment for a sales report line item quantity
+ * @access  Private (Restaurant Admin / Staff)
+ */
+router.post('/daily-sales/adjust', protect, restrictTo('restaurant_admin', 'staff'), async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user || !req.user.restaurantId) {
+      return res.status(400).json({ success: false, message: 'User is not associated with any restaurant.' });
+    }
+    const tenantId = req.user.restaurantId;
+    const { date, itemName, adjustedQty, reason } = req.body;
+
+    if (!date || !itemName || adjustedQty === undefined || adjustedQty === null) {
+      return res.status(400).json({ success: false, message: 'date, itemName, and adjustedQty are required.' });
+    }
+
+    const targetDateStr = date;
+    const [yearStr, monthStr, dayStr] = targetDateStr.split('-');
+    const year = parseInt(yearStr, 10);
+    const month = parseInt(monthStr, 10) - 1;
+    const day = parseInt(dayStr, 10);
+
+    const startOfDay = new Date(year, month, day, 0, 0, 0, 0);
+    const endOfDay = new Date(year, month, day, 23, 59, 59, 999);
+
+    // Compute raw original quantity from actual paid bills
+    const rawBills = await Bill.find({
+      restaurantId: tenantId,
+      paymentStatus: 'paid',
+      updatedAt: { $gte: startOfDay, $lte: endOfDay },
+    }).populate('orderId').lean();
+
+    const validBills = rawBills.filter((b) => b.paymentStatus === 'paid' && b.orderId && (b.orderId as any).status === 'completed');
+
+    let originalQty = 0;
+    validBills.forEach((bill: any) => {
+      const order = bill.orderId;
+      if (order && Array.isArray(order.items)) {
+        order.items.forEach((item: any) => {
+          if (item.name === itemName) {
+            originalQty += (item.quantity || 1);
+          }
+        });
+      }
+    });
+
+    const userName = (req.user as any).name || (req.user as any).username || 'Admin User';
+    const userId = req.user._id;
+
+    const adjustment = await ReportAdjustment.findOneAndUpdate(
+      { tenantId, reportDate: targetDateStr, itemName },
+      {
+        tenantId,
+        reportDate: targetDateStr,
+        itemName,
+        originalQty,
+        adjustedQty: Number(adjustedQty),
+        adjustedBy: userId,
+        adjustedByName: userName,
+        adjustedAt: new Date(),
+        reason: reason || '',
+      },
+      { upsert: true, new: true }
+    );
+
+    return res.json({
+      success: true,
+      message: 'Report adjustment saved successfully.',
+      data: adjustment,
+    });
+  } catch (error: any) {
+    console.error('Save report adjustment error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to save report adjustment.', error: error.message });
+  }
+});
+
+/**
+ * @route   GET /api/analytics/daily-sales/audit-trail
+ * @desc    Get audit trail log of all report adjustments for a specific date
+ * @access  Private (Restaurant Admin / Staff)
+ */
+router.get('/daily-sales/audit-trail', protect, restrictTo('restaurant_admin', 'staff'), async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user || !req.user.restaurantId) {
+      return res.status(400).json({ success: false, message: 'User is not associated with any restaurant.' });
+    }
+    const tenantId = req.user.restaurantId;
+    const dateStr = (req.query.date as string) || new Date().toISOString().split('T')[0];
+
+    const auditTrail = await ReportAdjustment.find({ tenantId, reportDate: dateStr }).sort({ updatedAt: -1 }).lean();
+
+    return res.json({
+      success: true,
+      count: auditTrail.length,
+      data: auditTrail,
+    });
+  } catch (error: any) {
+    console.error('Fetch audit trail error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to fetch audit trail.', error: error.message });
   }
 });
 

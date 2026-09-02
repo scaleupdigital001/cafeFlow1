@@ -675,6 +675,11 @@ export interface DailySalesReportData {
     name: string;
     quantity: number;
     amount: number;
+    isAdjusted?: boolean;
+    originalQty?: number;
+    adjustedByName?: string;
+    adjustedAt?: string;
+    reason?: string;
   }[];
   payments: {
     method: string;
@@ -682,6 +687,7 @@ export interface DailySalesReportData {
     count: number;
     amount: number;
   }[];
+  adjustments?: any[];
   // Legacy / fallback fields
   restaurantName?: string;
   startDate?: string;
@@ -691,29 +697,322 @@ export interface DailySalesReportData {
   totalTax?: number;
 }
 
-export const printDailySalesReport = async (data: DailySalesReportData): Promise<PrintResult> => {
-  const restName = data.restaurant?.name || data.restaurantName || 'CafeFlow Restaurant';
-  const reportDate = data.formattedDate || data.startDate || new Date().toISOString().split('T')[0];
-  const netRev = data.summary?.netSales ?? data.totalRevenue ?? 0;
-  const taxVal = data.summary?.taxes ?? data.totalTax ?? 0;
-  const countVal = data.summary?.completedOrders ?? data.totalOrders ?? 0;
+/**
+ * Helper to format a Date into "DD MMM YYYY" (e.g., "26 Aug 2026")
+ */
+export const formatDateToDDMMMYYYY = (dateInput?: string | Date): string => {
+  const d = dateInput ? new Date(dateInput) : new Date();
+  if (isNaN(d.getTime())) return new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  const day = String(d.getDate()).padStart(2, '0');
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const month = months[d.getMonth()];
+  const year = d.getFullYear();
+  return `${day} ${month} ${year}`;
+};
 
-  const receiptData: ThermalReceiptData = {
-    restaurantName: restName,
-    billNumber: `REPORT-${reportDate}`,
-    date: new Date().toISOString(),
-    tableNumber: 'N/A',
-    customerName: 'System Report',
-    items: [
-      { name: 'Completed Paid Orders', quantity: countVal, price: 0 },
-      { name: 'Total Tax Collected', quantity: 1, price: taxVal },
-    ],
-    subtotal: netRev - taxVal,
-    tax: taxVal,
-    totalAmount: netRev,
-    copyLabel: 'DAILY SALES REPORT',
-  };
-  return printSingleCopy(receiptData, 'DAILY SALES REPORT');
+/**
+ * Formats report date range into "DD MMM YYYY to DD MMM YYYY"
+ * If single-day report, duplicates date to guarantee "26 Aug 2026 to 26 Aug 2026"
+ */
+export const formatReportDateRangeText = (data: DailySalesReportData): string => {
+  if (data.startDate && data.endDate) {
+    return `${formatDateToDDMMMYYYY(data.startDate)} to ${formatDateToDDMMMYYYY(data.endDate)}`;
+  }
+  const dateStr = data.date || data.formattedDate || new Date().toISOString().split('T')[0];
+  const formatted = formatDateToDDMMMYYYY(dateStr);
+  return `${formatted} to ${formatted}`;
+};
+
+/**
+ * Formats footer print timestamp as "DD-MMM-YYYY, HH:mm" (e.g. "26-Aug-2026, 21:08")
+ */
+export const formatFooterPrintTimestamp = (d: Date = new Date()): string => {
+  const day = String(d.getDate()).padStart(2, '0');
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const month = months[d.getMonth()];
+  const year = d.getFullYear();
+  const hours = String(d.getHours()).padStart(2, '0');
+  const mins = String(d.getMinutes()).padStart(2, '0');
+  return `${day}-${month}-${year}, ${hours}:${mins}`;
+};
+
+/**
+ * Builds HTML report template for Daily Sales Report matching exact layout specification.
+ * Enforces heavy bold fonts (font-weight: 900 !important) everywhere for crisp thermal printing.
+ */
+export const buildDailySalesReportHTML = (data: DailySalesReportData): string => {
+  const restName = data.restaurant?.name || data.restaurantName || 'CafeFlow Restaurant';
+  const dateRangeText = formatReportDateRangeText(data);
+  const timestampText = formatFooterPrintTimestamp();
+
+  // Sequence number formatting (e.g. SEQ-20260826-0001)
+  const cleanDateStr = (data.date || new Date().toISOString().slice(0, 10)).replace(/-/g, '');
+  const sequenceNumber = `SEQ-${cleanDateStr}-0001`;
+
+  // Sort items ALPHABETICALLY by item name
+  const sortedItems = [...(data.items || [])].sort((a, b) => a.name.localeCompare(b.name));
+
+  // Compute Total line amount summing all line amounts
+  const totalLineAmount = sortedItems.reduce((sum, item) => sum + (item.amount || 0), 0);
+
+  const itemsHtml = sortedItems.map((item) => `
+    <div class="item-row">
+      <span class="col-particulars">${item.name}${item.isAdjusted ? ' <small style="font-size:10px; font-weight:900;">[ADJUSTED]</small>' : ''}</span>
+      <span class="col-qty">${item.quantity}</span>
+      <span class="col-amt">Rs. ${item.amount.toFixed(2)}</span>
+    </div>
+  `).join('');
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Sale Report - ${dateRangeText}</title>
+  <style>
+    @page {
+      size: 80mm auto;
+      margin: 2mm 2mm;
+    }
+    @media print {
+      html, body {
+        width: 76mm !important;
+        max-width: 76mm !important;
+        margin: 0 auto !important;
+        padding: 1mm 1mm !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+      .no-print {
+        display: none !important;
+      }
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: Arial, "Helvetica Neue", Helvetica, sans-serif !important;
+      font-weight: 900 !important;
+      color: #000 !important;
+      -webkit-font-smoothing: none !important;
+      -webkit-text-stroke: 0.4px #000 !important;
+      text-rendering: optimizeLegibility !important;
+    }
+    html, body, div, span, p, h1, h2, h3, header, footer {
+      font-weight: 900 !important;
+      color: #000 !important;
+      -webkit-text-stroke: 0.4px #000 !important;
+    }
+    body {
+      width: 78mm;
+      max-width: 100%;
+      margin: 0 auto;
+      padding: 3mm 2mm;
+      background: #fff;
+    }
+    .text-center { text-align: center !important; }
+    .text-right { text-align: right !important; }
+    .text-left { text-align: left !important; }
+
+    .header-box {
+      text-align: center;
+      margin-bottom: 6px;
+      padding-bottom: 4px;
+      border-bottom: 2px solid #000;
+    }
+    .restaurant-title {
+      font-size: 15px;
+      font-weight: 900 !important;
+      text-transform: uppercase;
+      margin-bottom: 2px;
+    }
+    .report-title {
+      font-size: 18px;
+      font-weight: 900 !important;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin: 2px 0;
+    }
+    .date-range-text {
+      font-size: 12.5px;
+      font-weight: 900 !important;
+      margin-top: 2px;
+    }
+
+    .table-header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+      font-weight: 900 !important;
+      border-top: 2px solid #000;
+      border-bottom: 2px solid #000;
+      padding: 4px 0;
+      margin: 6px 0 4px 0;
+      text-transform: uppercase;
+    }
+
+    .items-container {
+      margin: 4px 0;
+    }
+
+    .item-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      font-size: 12.5px;
+      font-weight: 900 !important;
+      padding: 4px 0;
+      border-bottom: 1px dashed #666;
+      page-break-inside: avoid;
+    }
+
+    .col-particulars {
+      flex: 1;
+      padding-right: 6px;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+      word-break: break-word;
+      font-weight: 900 !important;
+    }
+    .col-qty {
+      width: 42px;
+      text-align: center;
+      flex-shrink: 0;
+      font-weight: 900 !important;
+    }
+    .col-amt {
+      width: 80px;
+      text-align: right;
+      flex-shrink: 0;
+      white-space: nowrap;
+      font-weight: 900 !important;
+    }
+
+    .total-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 15px;
+      font-weight: 900 !important;
+      border-top: 2px solid #000;
+      border-bottom: 3px double #000;
+      padding: 6px 0;
+      margin: 8px 0 10px 0;
+      text-transform: uppercase;
+    }
+
+    .footer-box {
+      text-align: center;
+      border-top: 1px dashed #000;
+      padding-top: 6px;
+      margin-top: 8px;
+      font-size: 11px;
+      font-weight: 900 !important;
+    }
+    .footer-line {
+      margin-bottom: 2px;
+      font-weight: 900 !important;
+    }
+  </style>
+</head>
+<body>
+  <div class="header-box">
+    ${restName ? `<div class="restaurant-title">${restName}</div>` : ''}
+    <div class="report-title">Sale Report</div>
+    <div class="date-range-text">${dateRangeText}</div>
+  </div>
+
+  <div class="table-header-row">
+    <span class="col-particulars">PARTICULARS</span>
+    <span class="col-qty">QTY</span>
+    <span class="col-amt">AMT</span>
+  </div>
+
+  <div class="items-container">
+    ${sortedItems.length === 0 ? '<div class="item-row"><span class="col-particulars">No items sold</span></div>' : itemsHtml}
+  </div>
+
+  <div class="total-row">
+    <span>Total:</span>
+    <span>Rs. ${totalLineAmount.toFixed(2)}</span>
+  </div>
+
+  <div class="footer-box">
+    <div class="footer-line">Printed: ${timestampText}</div>
+    <div class="footer-line">Seq #: ${sequenceNumber}</div>
+  </div>
+</body>
+</html>
+  `;
+};
+
+export const printDailySalesReport = async (data: DailySalesReportData): Promise<PrintResult> => {
+  return new Promise((resolve) => {
+    try {
+      const htmlContent = buildDailySalesReportHTML(data);
+
+      const iframe = document.createElement('iframe');
+      iframe.style.position = 'fixed';
+      iframe.style.right = '0';
+      iframe.style.bottom = '0';
+      iframe.style.width = '0px';
+      iframe.style.height = '0px';
+      iframe.style.border = 'none';
+      iframe.name = `print-daily-report-${Date.now()}`;
+
+      document.body.appendChild(iframe);
+
+      const frameDoc = iframe.contentWindow?.document || iframe.contentDocument;
+      if (!frameDoc || !iframe.contentWindow) {
+        if (document.body.contains(iframe)) document.body.removeChild(iframe);
+        resolve({
+          success: false,
+          mode: 'browser_dialog',
+          message: 'Could not access frame context for Daily Sales Report print.',
+        });
+        return;
+      }
+
+      frameDoc.open();
+      frameDoc.write(htmlContent);
+      frameDoc.close();
+
+      setTimeout(() => {
+        try {
+          iframe.contentWindow?.focus();
+          iframe.contentWindow?.print();
+
+          setTimeout(() => {
+            if (document.body.contains(iframe)) {
+              document.body.removeChild(iframe);
+            }
+          }, 2500);
+
+          resolve({
+            success: true,
+            mode: 'browser_dialog',
+            message: 'Daily Sales Report dispatched to printer.',
+          });
+        } catch (err: any) {
+          if (document.body.contains(iframe)) {
+            document.body.removeChild(iframe);
+          }
+          resolve({
+            success: false,
+            mode: 'browser_dialog',
+            message: err.message || 'Failed to print Daily Sales Report.',
+          });
+        }
+      }, 350);
+    } catch (err: any) {
+      resolve({
+        success: false,
+        mode: 'browser_dialog',
+        message: err.message || 'Print error on Daily Sales Report.',
+      });
+    }
+  });
 };
 
 export interface QuickTicketPrintData {
