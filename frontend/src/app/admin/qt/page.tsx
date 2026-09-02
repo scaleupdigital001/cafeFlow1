@@ -185,7 +185,7 @@ export default function AdminQTPage() {
   }, [qts, statusFilter, tableSearchQuery]);
 
   // Helper for status badge styling & visual distinction
-  const getStatusBadge = (status: 'pending' | 'printed' | 'served') => {
+  const getStatusBadge = (status: QT['status']) => {
     switch (status) {
       case 'pending':
         return (
@@ -203,6 +203,12 @@ export default function AdminQTPage() {
         return (
           <Badge className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 text-[10px] font-extrabold uppercase px-2 py-0.5 tracking-wider">
             ✅ Served
+          </Badge>
+        );
+      case 'cleared':
+        return (
+          <Badge className="bg-gray-500/10 text-gray-600 dark:text-gray-400 border-gray-500/30 text-[10px] font-extrabold uppercase px-2 py-0.5 tracking-wider">
+            ⚪ Cleared
           </Badge>
         );
     }

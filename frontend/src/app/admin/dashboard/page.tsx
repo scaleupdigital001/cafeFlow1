@@ -9,6 +9,7 @@ import {
   FileText, CheckCircle2, X, Search, Sparkles, Receipt, Edit3, Check, History, RotateCcw
 } from 'lucide-react';
 import { printDailySalesReport, DailySalesReportData } from '../../../lib/printService';
+import { useAuthStore } from '../../../store/authStore';
 import dynamic from 'next/dynamic';
 
 const ResponsiveContainer = dynamic(() => import('recharts').then((m) => m.ResponsiveContainer), { ssr: false });
@@ -50,6 +51,7 @@ interface OrderStatusPoint {
 }
 
 export default function AdminDashboardPage() {
+  const { user } = useAuthStore();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -76,6 +78,7 @@ export default function AdminDashboardPage() {
   const [editingItemReason, setEditingItemReason] = useState<string>('');
   const [isSavingAdjustment, setIsSavingAdjustment] = useState<boolean>(false);
   const [isAuditModalOpen, setIsAuditModalOpen] = useState<boolean>(false);
+  const [isLoadingAuditTrail, setIsLoadingAuditTrail] = useState<boolean>(false);
   const [auditTrailList, setAuditTrailList] = useState<any[]>([]);
   const [adjustmentToastError, setAdjustmentToastError] = useState<string | null>(null);
 
@@ -126,7 +129,7 @@ export default function AdminDashboardPage() {
           amount: newAmount,
           isAdjusted: true,
           originalQty: origQty,
-          adjustedByName: user?.name || user?.username || 'Admin User',
+          adjustedByName: user?.name || user?.email || 'Admin User',
           adjustedAt: new Date().toISOString(),
           reason: editingItemReason,
         };

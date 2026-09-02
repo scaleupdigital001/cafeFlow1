@@ -76,7 +76,7 @@ export interface QT {
   tableNumber: string;
   orderId: string;
   items: QTItem[];
-  status: 'pending' | 'printed' | 'served';
+  status: 'pending' | 'printed' | 'served' | 'cleared';
   ticketNumber: string;
   createdAt: string;
   updatedAt?: string;
