@@ -123,38 +123,69 @@ export const playBellAlert = () => {
 };
 
 /**
- * Plays a high-impact commercial kitchen buzzer alarm (triple sharp pulses) to alert cooks and staff of new orders.
+ * Plays an ultra-loud commercial kitchen buzzer alarm (piercing 4-burst dual-harmonic pulse)
+ * Engineered with dynamic compression to maximize acoustic loudness across noisy kitchens.
  */
 export const playKitchenBuzzer = () => {
   try {
     const ctx = getAudioContext();
     if (!ctx) return;
 
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+
     const now = ctx.currentTime;
+
+    // Master Compressor + Limiter to maximize perceived loudness without clipping distortion
+    const compressor = ctx.createDynamicsCompressor();
+    compressor.threshold.setValueAtTime(-6, now);
+    compressor.knee.setValueAtTime(10, now);
+    compressor.ratio.setValueAtTime(16, now);
+    compressor.attack.setValueAtTime(0.002, now);
+    compressor.release.setValueAtTime(0.2, now);
+
+    const masterGain = ctx.createGain();
+    masterGain.gain.setValueAtTime(0.95, now);
+
+    masterGain.connect(compressor);
+    compressor.connect(ctx.destination);
+
+    // 4 sharp, high-intensity alarm bursts designed to cut through kitchen noise
     const pulses = [
-      { start: 0.00, end: 0.22, freq: 880 },
-      { start: 0.32, end: 0.54, freq: 880 },
-      { start: 0.64, end: 0.90, freq: 1046.50 }, // C6 high alert
+      { start: 0.00, end: 0.16, baseFreq: 920 },
+      { start: 0.22, end: 0.38, baseFreq: 920 },
+      { start: 0.44, end: 0.60, baseFreq: 1040 },
+      { start: 0.66, end: 0.92, baseFreq: 1180 },
     ];
 
-    pulses.forEach(({ start, end, freq }) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
+    pulses.forEach(({ start, end, baseFreq }) => {
+      // 1. Primary Square Wave (Maximum acoustic energy)
+      const squareOsc = ctx.createOscillator();
+      const squareGain = ctx.createGain();
+      squareOsc.type = 'square';
+      squareOsc.frequency.setValueAtTime(baseFreq, now + start);
+      squareGain.gain.setValueAtTime(0.85, now + start);
+      squareGain.gain.exponentialRampToValueAtTime(0.01, now + end);
+      squareOsc.connect(squareGain);
+      squareGain.connect(masterGain);
+      squareOsc.start(now + start);
+      squareOsc.stop(now + end);
 
-      // Rich buzzer texture (sawtooth + square harmonic)
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(freq, now + start);
-
-      gain.gain.setValueAtTime(0.55, now + start);
-      gain.gain.exponentialRampToValueAtTime(0.01, now + end);
-
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-
-      osc.start(now + start);
-      osc.stop(now + end);
+      // 2. Harmonic Sawtooth Wave (Sharp piercing bite)
+      const sawOsc = ctx.createOscillator();
+      const sawGain = ctx.createGain();
+      sawOsc.type = 'sawtooth';
+      sawOsc.frequency.setValueAtTime(baseFreq * 2, now + start);
+      sawGain.gain.setValueAtTime(0.45, now + start);
+      sawGain.gain.exponentialRampToValueAtTime(0.01, now + end);
+      sawOsc.connect(sawGain);
+      sawGain.connect(masterGain);
+      sawOsc.start(now + start);
+      sawOsc.stop(now + end);
     });
   } catch (err) {
     console.warn('[Kitchen Buzzer] Audio playback not permitted yet:', err);
   }
 };
+
