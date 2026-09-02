@@ -4,10 +4,13 @@ import React, { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import api from '../../lib/axios';
 import { useAuthStore } from '../../store/authStore';
+import useSocket from '../../hooks/useSocket';
+import { playOrderChime, playBellAlert, initAudioUnlock } from '../../lib/soundService';
+import { printQuickTicket } from '../../lib/printService';
 import ThemeToggle from '../../components/ThemeToggle';
 import { 
   Loader2, LayoutDashboard, UtensilsCrossed, Tablet, Users, 
-  ChefHat, LogOut, Coffee, Menu, X, Settings, Ticket
+  ChefHat, LogOut, Coffee, Menu, X, Settings, Ticket, Bell, Printer
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -18,6 +21,121 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   
   const [mounted, setMounted] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [incomingAlert, setIncomingAlert] = useState<{
+    id: string;
+    tableNumber: string;
+    title: string;
+    subtitle: string;
+    qt?: any;
+    items?: Array<{ name: string; quantity: number }>;
+  } | null>(null);
+  const [isPrintingAlertKOT, setIsPrintingAlertKOT] = useState(false);
+
+  const socket = useSocket('restaurant', user?.restaurantId);
+
+  useEffect(() => {
+    initAudioUnlock();
+  }, []);
+
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleNewOrder = (order: any) => {
+      console.log('[Admin Sound Alert] New order received for table:', order?.tableNumber);
+      playOrderChime();
+      setIncomingAlert({
+        id: Date.now().toString(),
+        tableNumber: order?.tableNumber || 'N/A',
+        title: `New Order: Table ${order?.tableNumber || 'N/A'}`,
+        subtitle: `${order?.items?.length || 1} item(s) ordered`,
+        items: order?.items,
+      });
+    };
+
+    const handleOrderAppended = (data: any) => {
+      console.log('[Admin Sound Alert] Extra items ordered for table:', data?.tableNumber);
+      playOrderChime();
+      const itemsCount = data?.newItems?.length || 1;
+      const itemNames = data?.newItems?.map((i: any) => `${i.quantity}x ${i.name}`).join(', ') || `${itemsCount} new item(s)`;
+      setIncomingAlert({
+        id: Date.now().toString(),
+        tableNumber: data?.tableNumber || 'N/A',
+        title: `QR Scan Added: Table ${data?.tableNumber || 'N/A'}`,
+        subtitle: itemNames,
+        qt: data?.qt,
+        items: data?.newItems,
+      });
+    };
+
+    const handleNewQT = (qt: any) => {
+      console.log('[Admin Sound Alert] New QT ticket received:', qt?.ticketNumber);
+      playOrderChime();
+      const itemsList = qt?.items?.map((i: any) => `${i.quantity}x ${i.name}`).join(', ') || 'New items';
+      setIncomingAlert({
+        id: Date.now().toString(),
+        tableNumber: qt?.tableNumber || 'N/A',
+        title: `Kitchen Ticket: ${qt?.ticketNumber || 'QT'} (Table ${qt?.tableNumber || 'N/A'})`,
+        subtitle: itemsList,
+        qt: qt,
+        items: qt?.items,
+      });
+    };
+
+    const handleWaiterRequested = (data: any) => {
+      playBellAlert();
+      setIncomingAlert({
+        id: Date.now().toString(),
+        tableNumber: data?.tableNumber || 'N/A',
+        title: `Staff Call: Table ${data?.tableNumber || 'N/A'}`,
+        subtitle: 'Customer called waiter assistance',
+      });
+    };
+
+    const handleBillRequested = (data: any) => {
+      playBellAlert();
+      setIncomingAlert({
+        id: Date.now().toString(),
+        tableNumber: data?.tableNumber || 'N/A',
+        title: `Bill Requested: Table ${data?.tableNumber || 'N/A'}`,
+        subtitle: 'Customer requested invoice settlement',
+      });
+    };
+
+    socket.on('new_order', handleNewOrder);
+    socket.on('order_items_appended', handleOrderAppended);
+    socket.on('new_qt', handleNewQT);
+    socket.on('waiter_requested', handleWaiterRequested);
+    socket.on('bill_requested', handleBillRequested);
+
+    return () => {
+      socket.off('new_order', handleNewOrder);
+      socket.off('order_items_appended', handleOrderAppended);
+      socket.off('new_qt', handleNewQT);
+      socket.off('waiter_requested', handleWaiterRequested);
+      socket.off('bill_requested', handleBillRequested);
+    };
+  }, [socket]);
+
+  // Auto-dismiss alert after 9 seconds
+  useEffect(() => {
+    if (!incomingAlert) return;
+    const timer = setTimeout(() => {
+      setIncomingAlert(null);
+    }, 9000);
+    return () => clearTimeout(timer);
+  }, [incomingAlert]);
+
+  const handlePrintAlertKOT = async (qt: any) => {
+    if (!qt) return;
+    setIsPrintingAlertKOT(true);
+    try {
+      await printQuickTicket(qt, useAuthStore.getState().restaurant?.name);
+    } catch (err) {
+      console.error('Failed to print alert KOT:', err);
+    } finally {
+      setIsPrintingAlertKOT(false);
+    }
+  };
 
   useEffect(() => {
     setMounted(true);
@@ -198,7 +316,46 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           <ThemeToggle />
         </header>
 
-        <div className="flex-1 p-6 md:p-8 overflow-y-auto">
+        <div className="flex-1 p-6 md:p-8 overflow-y-auto relative">
+          {/* Real-time floating Order & KOT notification banner */}
+          {incomingAlert && (
+            <div className="fixed top-20 right-6 z-50 max-w-sm w-full bg-card border-2 border-primary/50 text-card-foreground p-4 rounded-2xl shadow-2xl shadow-primary/20 animate-in slide-in-from-top-4 duration-300 flex items-start gap-3.5 backdrop-blur-md">
+              <div className="w-10 h-10 rounded-xl bg-primary/15 text-primary flex items-center justify-center shrink-0 animate-bounce">
+                <Bell className="w-5 h-5" />
+              </div>
+
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-serif font-black text-sm text-foreground truncate">
+                    {incomingAlert.title}
+                  </h4>
+                  <button
+                    onClick={() => setIncomingAlert(null)}
+                    className="text-muted-foreground hover:text-foreground p-1 rounded-full hover:bg-secondary cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2 font-medium">
+                  {incomingAlert.subtitle}
+                </p>
+
+                {incomingAlert.qt && (
+                  <div className="mt-2.5 flex items-center gap-2">
+                    <button
+                      onClick={() => handlePrintAlertKOT(incomingAlert.qt)}
+                      disabled={isPrintingAlertKOT}
+                      className="px-3 py-1.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-xs font-bold cursor-pointer transition-all flex items-center gap-1.5 shadow-md shadow-primary/20 disabled:opacity-60"
+                    >
+                      {isPrintingAlertKOT ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Printer className="w-3.5 h-3.5" />}
+                      <span>Print KOT ({incomingAlert.qt.ticketNumber || 'Ticket'})</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {children}
         </div>
       </div>

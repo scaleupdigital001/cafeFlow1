@@ -166,6 +166,14 @@ router.post('/', async (req, res) => {
     if (io) {
       io.to(restaurantId.toString()).emit(isNew ? 'new_order' : 'order_updated', order);
       io.to(restaurantId.toString()).emit('table_status_updated', { tableNumber: order.tableNumber });
+      if (!isNew) {
+        io.to(restaurantId.toString()).emit('order_items_appended', {
+          orderId: order._id,
+          tableNumber: order.tableNumber,
+          newItems: validatedNewItems,
+          qt: qtRecord,
+        });
+      }
       if (qtRecord) {
         io.to(restaurantId.toString()).emit('new_qt', qtRecord);
       }

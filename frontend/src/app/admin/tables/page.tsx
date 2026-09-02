@@ -4,7 +4,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import api from '../../../lib/axios';
 import useSocket from '../../../hooks/useSocket';
 import { useAuthStore } from '../../../store/authStore';
-import { printThermalReceipt, printDualThermalReceipt, printSingleCopy, ThermalReceiptData, DualPrintResult } from '../../../lib/printService';
+import { printThermalReceipt, printDualThermalReceipt, printSingleCopy, printQuickTicket, ThermalReceiptData, DualPrintResult } from '../../../lib/printService';
 import { getBackendBillUrl } from '../../../lib/config';
 import { Button } from '../../../components/ui/button';
 import { Badge } from '../../../components/ui/badge';
@@ -89,6 +89,7 @@ export default function AdminTablesPage() {
   const [completingTable, setCompletingTable] = useState(false);
   const [cancellingOrder, setCancellingOrder] = useState<string | null>(null);
   const [modifyingItemKey, setModifyingItemKey] = useState<string | null>(null);
+  const [printingKotId, setPrintingKotId] = useState<string | null>(null);
 
   // Register Table Form state
   const [tableNumber, setTableNumber] = useState('');
@@ -836,6 +837,29 @@ export default function AdminTablesPage() {
     }
   };
 
+  // Handle Admin Print KOT (Kitchen Order Ticket) for an active table order
+  const handlePrintKOTForOrder = async (order: Order) => {
+    setPrintingKotId(order._id);
+    try {
+      const kotData = {
+        ticketNumber: `KOT-T${order.tableNumber}`,
+        tableNumber: order.tableNumber,
+        createdAt: order.createdAt || new Date().toISOString(),
+        items: (order.items || []).map((i: any) => ({
+          name: i.name,
+          quantity: i.quantity,
+          notes: i.specialInstructions || (i.customizations ? i.customizations.map((c: any) => `${c.name}: ${c.selectedOption}`).join(', ') : ''),
+        })),
+      };
+      await printQuickTicket(kotData, restaurant?.name);
+    } catch (err) {
+      console.error('Failed to print KOT for order:', err);
+      alert('Failed to print Kitchen Ticket.');
+    } finally {
+      setPrintingKotId(null);
+    }
+  };
+
   // Handle Admin Remove / Modify Item
   const handleAdminModifyItem = async (order: Order, item: OrderItem, itemIdx: number, action: 'remove' | 'decrease' | 'increase') => {
     const itemId = (item as any)._id || String(itemIdx);
@@ -1401,6 +1425,22 @@ export default function AdminTablesPage() {
                           <Badge variant="outline" className="text-[9px] font-extrabold capitalize">
                             {ord.status}
                           </Badge>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={printingKotId === ord._id}
+                            onClick={() => handlePrintKOTForOrder(ord)}
+                            className="h-7 px-2.5 text-[10px] font-bold text-primary hover:bg-primary/10 border-primary/30 cursor-pointer gap-1 transition-all"
+                            title="Print Kitchen Order Ticket (KOT) for this table"
+                          >
+                            {printingKotId === ord._id ? (
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                            ) : (
+                              <>
+                                <Printer className="w-3 h-3" /> Print KOT
+                              </>
+                            )}
+                          </Button>
                           <Button
                             variant="outline"
                             size="sm"
