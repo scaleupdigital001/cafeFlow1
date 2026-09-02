@@ -618,6 +618,17 @@ router.patch('/:id/status', protect, restrictTo('restaurant_admin', 'staff'), as
         { $set: { status: 'grace', graceEndsAt: new Date(Date.now() + 10 * 60 * 1000) } }
       );
 
+      // Clear all active QTs for this table upon final bill completion
+      try {
+        const clearedCount = await QT.clearQTsForTable(order.restaurantId, order.tableNumber);
+        if (clearedCount > 0 && io) {
+          io.to(req.user.restaurantId.toString()).emit('qt_cleared', { tableNumber: order.tableNumber, count: clearedCount });
+          io.to(req.user.restaurantId.toString()).emit('qt_status_updated', { tableNumber: order.tableNumber, status: 'cleared' });
+        }
+      } catch (qtClearErr) {
+        console.error('[QT Settlement Clear Error]:', qtClearErr);
+      }
+
       if (io) {
         io.to(req.user.restaurantId.toString()).emit('table_status_updated', { tableNumber: order.tableNumber });
       }

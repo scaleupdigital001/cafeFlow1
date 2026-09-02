@@ -23,12 +23,25 @@ router.get('/', protect, restrictTo('restaurant_admin', 'staff', 'super_admin'),
       tenantId,
     };
 
-    if (status && ['pending', 'printed', 'served'].includes(String(status))) {
+    if (status && ['pending', 'printed', 'served', 'cleared'].includes(String(status))) {
       filterQuery.status = String(status);
+    } else {
+      // By default, exclude "cleared" QTs from active queue views
+      filterQuery.status = { $ne: 'cleared' };
     }
 
     if (tableNumber) {
-      filterQuery.tableNumber = canonicalTableKey(String(tableNumber));
+      const normTable = canonicalTableKey(String(tableNumber));
+      const rawTableStr = String(tableNumber).trim();
+      const digits = rawTableStr.replace(/\D/g, '');
+      const variants = [rawTableStr, normTable];
+      if (digits) {
+        variants.push(digits);
+        variants.push(`Table ${digits}`);
+        variants.push(`T-${digits}`);
+        variants.push(`T${digits}`);
+      }
+      filterQuery.tableNumber = { $in: Array.from(new Set(variants)) };
     }
 
     const qts = await QT.find(filterQuery).sort({ createdAt: -1 }).lean();

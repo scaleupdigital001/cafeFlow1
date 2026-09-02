@@ -11,7 +11,8 @@ export interface IQT extends Document {
   tableNumber: string;
   orderId: mongoose.Types.ObjectId;
   items: IQTItem[];
-  status: 'pending' | 'printed' | 'served';
+  status: 'pending' | 'printed' | 'served' | 'cleared';
+  clearedAt?: Date;
   ticketNumber: string;
   createdAt: Date;
   updatedAt: Date;
@@ -31,6 +32,7 @@ export interface IQTModel extends Model<IQT> {
       customizations?: Array<{ name: string; selectedOption: string }>;
     }>;
   }): Promise<IQT>;
+  clearQTsForTable(tenantId: mongoose.Types.ObjectId | string, tableNumber: string): Promise<number>;
 }
 
 const QTItemSchema = new Schema(
@@ -71,9 +73,12 @@ const QTSchema = new Schema<IQT, IQTModel>(
     },
     status: {
       type: String,
-      enum: ['pending', 'printed', 'served'],
+      enum: ['pending', 'printed', 'served', 'cleared'],
       default: 'pending',
       index: true,
+    },
+    clearedAt: {
+      type: Date,
     },
     ticketNumber: {
       type: String,
@@ -168,6 +173,42 @@ QTSchema.statics.createForOrder = async function (order: {
   });
 
   return await qt.save();
+};
+
+/**
+ * Marks all active (uncleared) QTs for a specific table and tenant as "cleared" upon final bill printing.
+ */
+QTSchema.statics.clearQTsForTable = async function (
+  tenantId: mongoose.Types.ObjectId | string,
+  tableNumber: string
+): Promise<number> {
+  const tenantObjectId = typeof tenantId === 'string' ? new mongoose.Types.ObjectId(tenantId) : tenantId;
+  const rawTableStr = String(tableNumber).trim();
+  const digits = rawTableStr.replace(/\D/g, '');
+
+  const tableVariants = [rawTableStr];
+  if (digits) {
+    tableVariants.push(digits);
+    tableVariants.push(`Table ${digits}`);
+    tableVariants.push(`T-${digits}`);
+    tableVariants.push(`T${digits}`);
+  }
+
+  const result = await this.updateMany(
+    {
+      tenantId: tenantObjectId,
+      tableNumber: { $in: Array.from(new Set(tableVariants)) },
+      status: { $ne: 'cleared' },
+    },
+    {
+      $set: {
+        status: 'cleared',
+        clearedAt: new Date(),
+      },
+    }
+  );
+
+  return result.modifiedCount || 0;
 };
 
 const QT = mongoose.model<IQT, IQTModel>('QT', QTSchema);

@@ -58,17 +58,28 @@ export default function AdminQTPage() {
 
     const handleQTStatusUpdated = (updatedQt: QT) => {
       console.log('[QT Admin Socket] Ticket status updated:', updatedQt.ticketNumber, updatedQt.status);
-      setQts((prev) => prev.map((q) => (q._id === updatedQt._id ? updatedQt : q)));
+      if (updatedQt.status === 'cleared') {
+        setQts((prev) => prev.filter((q) => q._id !== updatedQt._id));
+      } else {
+        setQts((prev) => prev.map((q) => (q._id === updatedQt._id ? updatedQt : q)));
+      }
+    };
+
+    const handleQTCleared = (data: { tableNumber: string }) => {
+      console.log('[QT Admin Socket] QTs cleared for table:', data?.tableNumber);
+      fetchQTs();
     };
 
     socket.on('new_qt', handleNewQT);
     socket.on('qt_status_updated', handleQTStatusUpdated);
+    socket.on('qt_cleared', handleQTCleared);
 
     return () => {
       socket.off('new_qt', handleNewQT);
       socket.off('qt_status_updated', handleQTStatusUpdated);
+      socket.off('qt_cleared', handleQTCleared);
     };
-  }, [socket]);
+  }, [socket, fetchQTs]);
 
   // Handler for marking QT as printed and launching thermal print
   const handlePrintQT = async (qt: QT) => {

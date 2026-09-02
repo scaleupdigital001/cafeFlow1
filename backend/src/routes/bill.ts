@@ -6,6 +6,7 @@ import Order from '../models/Order';
 import Restaurant from '../models/Restaurant';
 import TableSession from '../models/TableSession';
 import WaiterRequest from '../models/WaiterRequest';
+import QT from '../models/QT';
 import { canonicalTableKey } from '../utils/tableUtils';
 import { protect, restrictTo, AuthRequest } from '../middleware/auth';
 
@@ -273,6 +274,17 @@ router.post('/:id/pay/approve', protect, restrictTo('restaurant_admin', 'staff')
           { restaurantId: order.restaurantId, tableNumber: order.tableNumber, type: 'request_bill', status: 'pending' },
           { status: 'resolved' }
         );
+
+        // Clear all active QTs for this table upon final bill completion
+        try {
+          const clearedCount = await QT.clearQTsForTable(order.restaurantId, order.tableNumber);
+          if (clearedCount > 0) {
+            io.to(bill.restaurantId.toString()).emit('qt_cleared', { tableNumber: order.tableNumber, count: clearedCount });
+            io.to(bill.restaurantId.toString()).emit('qt_status_updated', { tableNumber: order.tableNumber, status: 'cleared' });
+          }
+        } catch (qtClearErr) {
+          console.error('[QT Bill Approval Clear Error]:', qtClearErr);
+        }
 
         io.to(bill.restaurantId.toString()).emit('order_updated', order);
         io.to(bill.restaurantId.toString()).emit('table_status_updated', { tableNumber: order.tableNumber });
