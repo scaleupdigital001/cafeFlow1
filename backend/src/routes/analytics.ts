@@ -37,8 +37,8 @@ router.get('/overview', protect, restrictTo('restaurant_admin'), async (req: Aut
       popularDishes,
       orderStatuses,
     ] = await Promise.all([
-      Order.countDocuments({ restaurantId }),
-      Order.countDocuments({ restaurantId, createdAt: { $gte: startOfToday } }),
+      Order.countDocuments({ restaurantId, status: 'completed' }),
+      Order.countDocuments({ restaurantId, status: 'completed', createdAt: { $gte: startOfToday } }),
       Table.countDocuments({ restaurantId }),
       Order.aggregate([
         { $match: { restaurantId, status: 'completed' } },
@@ -143,7 +143,7 @@ router.get('/peak-hours', protect, restrictTo('restaurant_admin'), async (req: A
     }
 
     const peakHours = await Order.aggregate([
-      { $match: { restaurantId: req.user.restaurantId } },
+      { $match: { restaurantId: req.user.restaurantId, status: 'completed' } },
       {
         $group: {
           _id: { $hour: { date: '$createdAt', timezone: 'Asia/Kolkata' } },
@@ -199,11 +199,13 @@ router.get('/daily-report', protect, restrictTo('restaurant_admin'), async (req:
     const restaurant = await Restaurant.findById(restaurantId);
     const cafeName = restaurant ? restaurant.name : 'Central Cafe & Bistro';
 
-    const bills = await Bill.find({
+    const rawBills = await Bill.find({
       restaurantId,
       paymentStatus: 'paid',
       updatedAt: { $gte: startDate, $lte: endDate }
     }).populate('orderId').sort({ updatedAt: 1 }).lean();
+
+    const bills = rawBills.filter((b) => b.paymentStatus === 'paid' && b.orderId && (b.orderId as any).status === 'completed');
 
     // Scenario C: Zero matching bills in range -> Return HTTP 404 JSON error
     if (bills.length === 0) {
@@ -344,11 +346,13 @@ router.get('/daily-sales', protect, restrictTo('restaurant_admin', 'staff'), asy
     const cafeName = restaurant ? restaurant.name : 'CafeFlow Restaurant';
 
     // 1. Fetch settled bills on the selected business date
-    const bills = await Bill.find({
+    const rawBills = await Bill.find({
       restaurantId,
       paymentStatus: 'paid',
       updatedAt: { $gte: startOfDay, $lte: endOfDay }
     }).populate('orderId').sort({ updatedAt: 1 }).lean();
+
+    const bills = rawBills.filter((b) => b.paymentStatus === 'paid' && b.orderId && (b.orderId as any).status === 'completed');
 
     // 2. Query order counts for the full business day
     const [allOrdersCount, completedOrdersCount, cancelledOrdersCount] = await Promise.all([

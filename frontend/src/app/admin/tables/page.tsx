@@ -87,6 +87,8 @@ export default function AdminTablesPage() {
   // Selected Table Modal State
   const [selectedTableNum, setSelectedTableNum] = useState<string | null>(null);
   const [completingTable, setCompletingTable] = useState(false);
+  const [cancellingOrder, setCancellingOrder] = useState<string | null>(null);
+  const [modifyingItemKey, setModifyingItemKey] = useState<string | null>(null);
 
   // Register Table Form state
   const [tableNumber, setTableNumber] = useState('');
@@ -788,6 +790,87 @@ export default function AdminTablesPage() {
     }
   };
 
+  // Handle Admin Cancel Order
+  const handleAdminCancelOrder = async (order: Order) => {
+    const isConfirmed = window.confirm(
+      `Are you sure you want to cancel the order for Table ${order.tableNumber}? This will deactivate the table and make it available again.`
+    );
+    if (!isConfirmed) return;
+
+    setCancellingOrder(order._id);
+    try {
+      await api.patch(`/orders/${order._id}/status`, { status: 'cancelled' });
+
+      // Update local activeOrders state immediately
+      const cancelledTableKey = normalizeTableKey(order.tableNumber);
+      setActiveOrders((prev) => prev.filter((o) => o._id !== order._id));
+      setWaiterRequests((prev) => prev.filter((r) => r.tableNumber !== order.tableNumber || r.type !== 'request_bill'));
+
+      // If this was the only order for the selected table, close modal
+      const remainingOrdersForTable = activeOrders.filter(
+        (o) => normalizeTableKey(o.tableNumber) === cancelledTableKey && o._id !== order._id
+      );
+      if (remainingOrdersForTable.length === 0) {
+        setSelectedTableNum(null);
+      }
+
+      await fetchAllData();
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Failed to cancel order.');
+    } finally {
+      setCancellingOrder(null);
+    }
+  };
+
+  // Handle Admin Remove / Modify Item
+  const handleAdminModifyItem = async (order: Order, item: OrderItem, itemIdx: number, action: 'remove' | 'decrease' | 'increase') => {
+    const itemId = (item as any)._id || String(itemIdx);
+    const itemKey = `${order._id}_${itemId}_${action}`;
+
+    const isLastItem = order.items.length === 1;
+    const isDestructive = action === 'remove' || (action === 'decrease' && item.quantity === 1);
+
+    if (isLastItem && isDestructive) {
+      const isConfirmed = window.confirm(
+        `This is the last item in the order. Removing it will cancel the order for Table ${order.tableNumber} and make the table available. Continue?`
+      );
+      if (!isConfirmed) return;
+    } else if (action === 'remove') {
+      const isConfirmed = window.confirm(`Remove "${item.name}" from this order?`);
+      if (!isConfirmed) return;
+    }
+
+    setModifyingItemKey(itemKey);
+    try {
+      const response = await api.patch(`/orders/${order._id}/items`, {
+        itemId,
+        action,
+      });
+
+      const resData = response.data;
+
+      if (resData.orderCancelled) {
+        const normKey = normalizeTableKey(order.tableNumber);
+        setActiveOrders((prev) => prev.filter((o) => o._id !== order._id));
+        const remainingOrdersForTable = activeOrders.filter(
+          (o) => normalizeTableKey(o.tableNumber) === normKey && o._id !== order._id
+        );
+        if (remainingOrdersForTable.length === 0) {
+          setSelectedTableNum(null);
+        }
+      } else if (resData.data) {
+        const updatedOrder: Order = resData.data;
+        setActiveOrders((prev) => prev.map((o) => (o._id === order._id ? updatedOrder : o)));
+      }
+
+      await fetchAllData();
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Failed to modify item.');
+    } finally {
+      setModifyingItemKey(null);
+    }
+  };
+
   // Print QR sticker popup
   const handlePrintQR = (tableNum: string, qrBase64: string) => {
     const printWindow = window.open('', '_blank');
@@ -874,9 +957,9 @@ export default function AdminTablesPage() {
               <Receipt className="w-4 h-4" /> Live Table Operations
             </button>
             <button
-              onClick={() => setActiveTab('manage')}
+              onClick={() => setActiveTab('qr')}
               className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                activeTab === 'manage'
+                activeTab === 'qr'
                   ? 'bg-primary text-primary-foreground shadow-md'
                   : 'text-muted-foreground hover:bg-secondary'
               }`}
@@ -1295,29 +1378,51 @@ export default function AdminTablesPage() {
                 <div className="space-y-4">
                   {selectedTableInfo.orders.map((ord) => (
                     <div key={ord._id} className="border border-border/60 rounded-xl p-4 space-y-3">
-                      <div className="flex justify-between items-start border-b border-border/40 pb-2">
+                      <div className="flex justify-between items-center border-b border-border/40 pb-2.5">
                         <div>
                           <span className="font-bold text-xs text-foreground block">Customer: {ord.customerName}</span>
                           <span className="text-[10px] text-muted-foreground font-mono">Phone: {ord.phoneNumber}</span>
                         </div>
-                        <Badge variant="outline" className="text-[9px] font-extrabold capitalize">
-                          {ord.status}
-                        </Badge>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline" className="text-[9px] font-extrabold capitalize">
+                            {ord.status}
+                          </Badge>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={cancellingOrder === ord._id}
+                            onClick={() => handleAdminCancelOrder(ord)}
+                            className="h-7 px-2.5 text-[10px] font-bold text-destructive hover:bg-destructive/10 border-destructive/30 cursor-pointer gap-1 transition-all"
+                            title="Cancel this order and make table available"
+                          >
+                            {cancellingOrder === ord._id ? (
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                            ) : (
+                              <>
+                                <Trash2 className="w-3 h-3" /> Cancel Order
+                              </>
+                            )}
+                          </Button>
+                        </div>
                       </div>
 
                       {/* Items table */}
                       <div className="divide-y divide-border/30 text-xs">
                         {ord.items.map((item, idx) => {
+                          const itemId = (item as any)._id || String(idx);
                           const extra = item.customizations
                             ? item.customizations.reduce((acc, c) => acc + c.extraPrice, 0)
                             : 0;
                           const lineTotal = (item.price + extra) * item.quantity;
+                          const isDecreasing = modifyingItemKey === `${ord._id}_${itemId}_decrease`;
+                          const isIncreasing = modifyingItemKey === `${ord._id}_${itemId}_increase`;
+                          const isRemoving = modifyingItemKey === `${ord._id}_${itemId}_remove`;
 
                           return (
-                            <div key={idx} className="py-2 flex justify-between items-start">
-                              <div>
-                                <span className="font-semibold text-foreground">
-                                  {item.name} <span className="text-primary font-bold">x {item.quantity}</span>
+                            <div key={idx} className="py-2.5 flex items-center justify-between gap-3">
+                              <div className="flex-1 min-w-0">
+                                <span className="font-semibold text-foreground block truncate">
+                                  {item.name}
                                 </span>
                                 {item.customizations && item.customizations.length > 0 && (
                                   <div className="text-[10px] text-muted-foreground">
@@ -1325,7 +1430,46 @@ export default function AdminTablesPage() {
                                   </div>
                                 )}
                               </div>
-                              <span className="font-bold text-foreground">Rs. {lineTotal.toFixed(2)}</span>
+
+                              {/* Quantity Controls & Line Total */}
+                              <div className="flex items-center gap-2.5 shrink-0">
+                                <div className="flex items-center border border-border/70 rounded-lg p-0.5 bg-secondary/30">
+                                  <button
+                                    disabled={Boolean(modifyingItemKey)}
+                                    onClick={() => handleAdminModifyItem(ord, item, idx, 'decrease')}
+                                    className="p-1 hover:bg-secondary rounded text-muted-foreground hover:text-foreground cursor-pointer transition-colors disabled:opacity-30"
+                                    title="Decrease quantity"
+                                  >
+                                    {isDecreasing ? <Loader2 className="w-3 h-3 animate-spin text-primary" /> : <Minus className="w-3 h-3" />}
+                                  </button>
+
+                                  <span className="px-2 font-bold text-xs text-foreground min-w-[18px] text-center font-mono">
+                                    {item.quantity}
+                                  </span>
+
+                                  <button
+                                    disabled={Boolean(modifyingItemKey)}
+                                    onClick={() => handleAdminModifyItem(ord, item, idx, 'increase')}
+                                    className="p-1 hover:bg-secondary rounded text-muted-foreground hover:text-foreground cursor-pointer transition-colors disabled:opacity-30"
+                                    title="Increase quantity"
+                                  >
+                                    {isIncreasing ? <Loader2 className="w-3 h-3 animate-spin text-primary" /> : <Plus className="w-3 h-3" />}
+                                  </button>
+                                </div>
+
+                                <button
+                                  disabled={Boolean(modifyingItemKey)}
+                                  onClick={() => handleAdminModifyItem(ord, item, idx, 'remove')}
+                                  className="p-1.5 text-destructive hover:bg-destructive/10 rounded-lg cursor-pointer transition-colors disabled:opacity-30"
+                                  title="Remove item from order"
+                                >
+                                  {isRemoving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                                </button>
+
+                                <span className="font-bold text-foreground min-w-[60px] text-right font-mono">
+                                  Rs. {lineTotal.toFixed(2)}
+                                </span>
+                              </div>
                             </div>
                           );
                         })}

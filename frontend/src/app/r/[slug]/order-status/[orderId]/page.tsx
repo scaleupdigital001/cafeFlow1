@@ -24,7 +24,7 @@ interface Bill {
   billNumber: string;
   pdfUrl?: string;
   totalAmount: number;
-  paymentStatus: 'pending' | 'verifying' | 'paid';
+  paymentStatus: 'pending' | 'verifying' | 'paid' | 'void';
   paymentMethod?: 'upi_link' | 'cash';
   restaurantId?: {
     name: string;

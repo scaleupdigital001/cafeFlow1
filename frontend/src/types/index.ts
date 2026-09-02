@@ -58,7 +58,8 @@ export interface Bill {
   orderId?: any;
   restaurantId?: any;
   tableNumber?: string;
-  paymentStatus?: 'pending' | 'verifying' | 'paid';
+  paymentStatus?: 'pending' | 'verifying' | 'paid' | 'void';
   paymentMethod?: string;
+  voidNote?: string;
   createdAt: string;
 }

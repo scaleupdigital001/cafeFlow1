@@ -421,15 +421,60 @@ router.patch('/:id/status', protect, restrictTo('restaurant_admin', 'staff'), as
       return res.status(404).json({ success: false, message: 'Order not found in your restaurant.' });
     }
 
+    // Payment Safety Check: Do NOT modify or cancel a completed order or paid bill
+    if (order.status === 'completed' && status === 'cancelled') {
+      return res.status(400).json({ success: false, message: 'This bill has already been finalized and cannot be modified.' });
+    }
+
+    const existingBillForOrder = await Bill.findOne({ orderId: order._id });
+    if (existingBillForOrder && existingBillForOrder.paymentStatus === 'paid' && status === 'cancelled') {
+      return res.status(400).json({ success: false, message: 'This bill has already been finalized and cannot be modified.' });
+    }
+
     order.status = status;
     await order.save();
 
-    // Broadcast update via WebSockets
     const io = req.app.get('io');
+    const normTable = canonicalTableKey(order.tableNumber);
+
+    // If order is cancelled, close TableSession, void pending/verifying bill, resolve waiter requests
+    if (status === 'cancelled') {
+      await TableSession.updateMany(
+        { restaurantId: order.restaurantId, $or: [{ _id: order.sessionId }, { tableNumber: normTable, status: { $in: ['active', 'grace'] } }] },
+        { $set: { status: 'closed' } }
+      );
+
+      if (existingBillForOrder && existingBillForOrder.paymentStatus !== 'void') {
+        existingBillForOrder.paymentStatus = 'void';
+        existingBillForOrder.voidNote = 'Order cancelled by staff';
+        await existingBillForOrder.save();
+      }
+
+      await WaiterRequest.updateMany(
+        { restaurantId: req.user.restaurantId, tableNumber: order.tableNumber, type: 'request_bill', status: 'pending' },
+        { status: 'resolved' }
+      );
+
+      if (io) {
+        io.to(order._id.toString()).emit('order_status_updated', order);
+        io.to(req.user.restaurantId.toString()).emit('order_updated', order);
+        io.to(req.user.restaurantId.toString()).emit('table_status_updated', { tableNumber: order.tableNumber });
+        if (existingBillForOrder) {
+          io.to(req.user.restaurantId.toString()).emit('bill_status_updated', existingBillForOrder);
+        }
+      }
+
+      return res.json({
+        success: true,
+        message: 'Order cancelled successfully and table is now available.',
+        data: order,
+        bill: existingBillForOrder,
+      });
+    }
+
+    // Broadcast update via WebSockets
     if (io) {
-      // Notify tracking customer room
       io.to(order._id.toString()).emit('order_status_updated', order);
-      // Notify restaurant room
       io.to(req.user.restaurantId.toString()).emit('order_updated', order);
       console.log(`[Socket] Broadcast order_status_updated to: ${order._id}`);
     }
@@ -438,7 +483,6 @@ router.patch('/:id/status', protect, restrictTo('restaurant_admin', 'staff'), as
     let populatedBillData = null;
     if (status === 'completed') {
       // Automatic Consolidation Safeguard: Merge any other open orders for this table into this primary order
-      const normTable = canonicalTableKey(order.tableNumber);
       const otherOpenOrders = await Order.find({
         restaurantId: order.restaurantId,
         _id: { $ne: order._id },
@@ -550,6 +594,191 @@ router.patch('/:id/status', protect, restrictTo('restaurant_admin', 'staff'), as
     return res.status(500).json({ success: false, message: 'Failed to update status.', error: error.message });
   }
 });
+
+/**
+ * Helper function to handle item removal or quantity modification for an order
+ */
+const modifyOrderItemHandler = async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user || !req.user.restaurantId) {
+      return res.status(400).json({ success: false, message: 'User is not associated with any restaurant.' });
+    }
+
+    const { id: orderId, itemId: paramItemId } = req.params;
+    const { itemId: bodyItemId, action = 'remove', quantity: targetQuantity } = req.body;
+    const itemId = paramItemId || bodyItemId;
+
+    if (!itemId) {
+      return res.status(400).json({ success: false, message: 'Item identifier is required.' });
+    }
+
+    const order = await Order.findOne({ _id: orderId, restaurantId: req.user.restaurantId });
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found in your restaurant.' });
+    }
+
+    // Payment Safety: Block modification if order is completed or bill is paid
+    if (order.status === 'completed') {
+      return res.status(400).json({ success: false, message: 'This bill has already been finalized and cannot be modified.' });
+    }
+
+    const existingBill = await Bill.findOne({ orderId: order._id });
+    if (existingBill && existingBill.paymentStatus === 'paid') {
+      return res.status(400).json({ success: false, message: 'This bill has already been finalized and cannot be modified.' });
+    }
+
+    if (order.status === 'cancelled') {
+      return res.status(400).json({ success: false, message: 'Cannot modify a cancelled order.' });
+    }
+
+    // Locate item index
+    let itemIndex = order.items.findIndex(
+      (i: any) => i._id?.toString() === itemId || i.id === itemId
+    );
+
+    if (itemIndex === -1 && !isNaN(Number(itemId))) {
+      const idx = Number(itemId);
+      if (idx >= 0 && idx < order.items.length) {
+        itemIndex = idx;
+      }
+    }
+
+    if (itemIndex === -1) {
+      return res.status(404).json({ success: false, message: 'Item not found in order.' });
+    }
+
+    // Apply action
+    const currentQty = order.items[itemIndex].quantity;
+    if (action === 'remove') {
+      order.items.splice(itemIndex, 1);
+    } else if (action === 'decrease') {
+      if (currentQty > 1) {
+        order.items[itemIndex].quantity -= 1;
+      } else {
+        order.items.splice(itemIndex, 1);
+      }
+    } else if (action === 'increase') {
+      order.items[itemIndex].quantity += 1;
+    } else if (action === 'update') {
+      const newQty = Number(targetQuantity);
+      if (isNaN(newQty) || newQty <= 0) {
+        order.items.splice(itemIndex, 1);
+      } else {
+        order.items[itemIndex].quantity = newQty;
+      }
+    } else {
+      return res.status(400).json({ success: false, message: 'Invalid item action.' });
+    }
+
+    const io = req.app.get('io');
+    const normTable = canonicalTableKey(order.tableNumber);
+
+    // Case C: Last item removed -> Cancel order, close session, void bill
+    if (order.items.length === 0) {
+      order.subtotal = 0;
+      order.tax = 0;
+      order.totalAmount = 0;
+      order.status = 'cancelled';
+      await order.save();
+
+      // Close TableSession
+      await TableSession.updateMany(
+        { restaurantId: order.restaurantId, $or: [{ _id: order.sessionId }, { tableNumber: normTable, status: { $in: ['active', 'grace'] } }] },
+        { $set: { status: 'closed' } }
+      );
+
+      // Void bill if present
+      if (existingBill && existingBill.paymentStatus !== 'void') {
+        existingBill.paymentStatus = 'void';
+        existingBill.voidNote = 'Order cancelled because all items were removed';
+        await existingBill.save();
+      }
+
+      // Resolve pending waiter requests
+      await WaiterRequest.updateMany(
+        { restaurantId: order.restaurantId, tableNumber: order.tableNumber, status: 'pending' },
+        { status: 'resolved' }
+      );
+
+      if (io) {
+        io.to(order._id.toString()).emit('order_status_updated', order);
+        io.to(req.user.restaurantId.toString()).emit('order_updated', order);
+        io.to(req.user.restaurantId.toString()).emit('table_status_updated', { tableNumber: order.tableNumber });
+        if (existingBill) {
+          io.to(req.user.restaurantId.toString()).emit('bill_status_updated', existingBill);
+        }
+      }
+
+      return res.json({
+        success: true,
+        message: 'Last item removed. Order has been cancelled and table is now available.',
+        data: order,
+        orderCancelled: true,
+      });
+    }
+
+    // Partial item removal / modification: Recalculate totals server-side
+    let newSubtotal = 0;
+    for (const item of order.items) {
+      let itemPrice = item.price;
+      if (item.customizations && item.customizations.length > 0) {
+        for (const cust of item.customizations) {
+          itemPrice += cust.extraPrice || 0;
+        }
+      }
+      newSubtotal += itemPrice * item.quantity;
+    }
+
+    order.subtotal = Number(newSubtotal.toFixed(2));
+    const restaurant = await Restaurant.findById(order.restaurantId);
+    const taxRate = restaurant?.taxRate !== undefined && restaurant?.taxRate !== null ? Number(restaurant.taxRate) : 5;
+    order.tax = Number(((order.subtotal * taxRate) / 100).toFixed(2));
+    order.totalAmount = Number((order.subtotal + order.tax).toFixed(2));
+
+    await order.save();
+
+    // Sync bill if exists and in pending/verifying status
+    if (existingBill && existingBill.paymentStatus !== 'void' && existingBill.paymentStatus !== 'paid') {
+      existingBill.subtotal = order.subtotal;
+      existingBill.tax = order.tax;
+      existingBill.totalAmount = order.totalAmount;
+      await existingBill.save();
+    }
+
+    if (io) {
+      io.to(order._id.toString()).emit('order_status_updated', order);
+      io.to(req.user.restaurantId.toString()).emit('order_updated', order);
+      io.to(req.user.restaurantId.toString()).emit('table_status_updated', { tableNumber: order.tableNumber });
+      if (existingBill) {
+        io.to(req.user.restaurantId.toString()).emit('bill_status_updated', existingBill);
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: 'Item updated and totals recalculated successfully.',
+      data: order,
+      bill: existingBill,
+    });
+  } catch (error: any) {
+    console.error('Modify order item error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to modify order item.', error: error.message });
+  }
+};
+
+/**
+ * @route   PATCH /api/orders/:id/items
+ * @desc    Remove or update an item in an active order
+ * @access  Private (Restaurant Admin / Staff)
+ */
+router.patch('/:id/items', protect, restrictTo('restaurant_admin', 'staff'), modifyOrderItemHandler);
+
+/**
+ * @route   DELETE /api/orders/:id/items/:itemId
+ * @desc    Delete a specific item from an active order
+ * @access  Private (Restaurant Admin / Staff)
+ */
+router.delete('/:id/items/:itemId', protect, restrictTo('restaurant_admin', 'staff'), modifyOrderItemHandler);
 
 /**
  * @route   POST /api/sessions/:id/reopen

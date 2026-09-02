@@ -649,28 +649,68 @@ export const printThermalReceipt = async (data: ThermalReceiptData): Promise<Pri
 };
 
 export interface DailySalesReportData {
-  restaurantName: string;
-  startDate: string;
-  endDate: string;
-  totalOrders: number;
-  totalRevenue: number;
-  totalTax: number;
+  date?: string;
+  formattedDate?: string;
+  generatedAt?: string;
+  restaurant: {
+    name: string;
+    address?: string;
+    contact?: string;
+    gstNumber?: string;
+    taxRate?: number;
+  };
+  summary: {
+    grossSales: number;
+    taxes: number;
+    taxRate?: number;
+    netSales: number;
+    totalOrders: number;
+    completedOrders: number;
+    cancelledOrders: number;
+    allOrders: number;
+    totalItems: number;
+    averageOrderValue: number;
+  };
+  items: {
+    name: string;
+    quantity: number;
+    amount: number;
+  }[];
+  payments: {
+    method: string;
+    label: string;
+    count: number;
+    amount: number;
+  }[];
+  // Legacy / fallback fields
+  restaurantName?: string;
+  startDate?: string;
+  endDate?: string;
+  totalOrders?: number;
+  totalRevenue?: number;
+  totalTax?: number;
 }
 
 export const printDailySalesReport = async (data: DailySalesReportData): Promise<PrintResult> => {
+  const restName = data.restaurant?.name || data.restaurantName || 'CafeFlow Restaurant';
+  const reportDate = data.formattedDate || data.startDate || new Date().toISOString().split('T')[0];
+  const netRev = data.summary?.netSales ?? data.totalRevenue ?? 0;
+  const taxVal = data.summary?.taxes ?? data.totalTax ?? 0;
+  const countVal = data.summary?.completedOrders ?? data.totalOrders ?? 0;
+
   const receiptData: ThermalReceiptData = {
-    restaurantName: data.restaurantName,
-    billNumber: `REPORT-${data.startDate}`,
+    restaurantName: restName,
+    billNumber: `REPORT-${reportDate}`,
     date: new Date().toISOString(),
     tableNumber: 'N/A',
     customerName: 'System Report',
     items: [
-      { name: 'Total Orders Handled', quantity: data.totalOrders, price: 0 },
-      { name: 'Total Tax Collected', quantity: 1, price: data.totalTax },
+      { name: 'Completed Paid Orders', quantity: countVal, price: 0 },
+      { name: 'Total Tax Collected', quantity: 1, price: taxVal },
     ],
-    subtotal: data.totalRevenue - data.totalTax,
-    tax: data.totalTax,
-    totalAmount: data.totalRevenue,
+    subtotal: netRev - taxVal,
+    tax: taxVal,
+    totalAmount: netRev,
     copyLabel: 'DAILY SALES REPORT',
   };
   return printSingleCopy(receiptData, 'DAILY SALES REPORT');
