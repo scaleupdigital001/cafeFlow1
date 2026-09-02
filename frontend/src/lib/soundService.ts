@@ -121,3 +121,40 @@ export const playBellAlert = () => {
     console.warn('[Audio Alert] Bell playback not permitted yet:', err);
   }
 };
+
+/**
+ * Plays a high-impact commercial kitchen buzzer alarm (triple sharp pulses) to alert cooks and staff of new orders.
+ */
+export const playKitchenBuzzer = () => {
+  try {
+    const ctx = getAudioContext();
+    if (!ctx) return;
+
+    const now = ctx.currentTime;
+    const pulses = [
+      { start: 0.00, end: 0.22, freq: 880 },
+      { start: 0.32, end: 0.54, freq: 880 },
+      { start: 0.64, end: 0.90, freq: 1046.50 }, // C6 high alert
+    ];
+
+    pulses.forEach(({ start, end, freq }) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      // Rich buzzer texture (sawtooth + square harmonic)
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(freq, now + start);
+
+      gain.gain.setValueAtTime(0.55, now + start);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + end);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(now + start);
+      osc.stop(now + end);
+    });
+  } catch (err) {
+    console.warn('[Kitchen Buzzer] Audio playback not permitted yet:', err);
+  }
+};

@@ -7,13 +7,14 @@ import useSocket from '../../hooks/useSocket';
 import api from '../../lib/axios';
 import { getBackendBillUrl } from '../../lib/config';
 import { printThermalReceipt, ThermalReceiptData } from '../../lib/printService';
+import { playKitchenBuzzer, playBellAlert, initAudioUnlock } from '../../lib/soundService';
 import { Button } from '../../components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '../../components/ui/card';
 import { Badge } from '../../components/ui/badge';
 import ThemeToggle from '../../components/ThemeToggle';
 import { 
   Loader2, LogOut, Clock, ChefHat, CheckSquare, BellRing, 
-  Sparkles, Coffee, AlertTriangle, CheckCircle2, X, Plus, Smartphone, Printer
+  Sparkles, Coffee, AlertTriangle, CheckCircle2, X, Plus, Smartphone, Printer, Volume2, Bell
 } from 'lucide-react';
 
 import { Order, OrderItem, WaiterRequest, Bill, QT } from '../../types';
@@ -46,8 +47,21 @@ export default function KitchenDashboard() {
   // Track UPI/Cash bills verifying state
   const [verifyingBills, setVerifyingBills] = useState<{ billId: string; billNumber: string; tableNumber: string; totalAmount: number; paymentMethod?: string }[]>([]);
 
+  // Real-time kitchen buzzer alert state
+  const [buzzerAlert, setBuzzerAlert] = useState<{
+    id: string;
+    tableNumber: string;
+    itemCount: number;
+    itemsSummary: string;
+  } | null>(null);
+
   // Bind to socket updates for this restaurant room
   const socket = useSocket('restaurant', restaurantId);
+
+  // Unlock browser audio permissions on first user click/touch
+  useEffect(() => {
+    initAudioUnlock();
+  }, []);
 
   // Fetch waiter active requests
   const fetchActiveWaiterRequests = async () => {
@@ -58,6 +72,15 @@ export default function KitchenDashboard() {
       console.error('Failed to fetch waiter requests:', err);
     }
   };
+
+  // Auto-dismiss buzzer alert banner after 15 seconds
+  useEffect(() => {
+    if (!buzzerAlert) return;
+    const timer = setTimeout(() => {
+      setBuzzerAlert(null);
+    }, 15000);
+    return () => clearTimeout(timer);
+  }, [buzzerAlert]);
 
   // Load dismissed bill IDs from localStorage on mount
   useEffect(() => {
@@ -129,7 +152,7 @@ export default function KitchenDashboard() {
     if (!socket) return;
 
     socket.on('new_order', (newOrder: Order) => {
-      console.log('[Kitchen Socket] New order received:', newOrder._id);
+      console.log('[Kitchen Buzzer] New order received:', newOrder._id);
       
       // Add to list if not already present
       setOrders((prev) => {
@@ -137,14 +160,26 @@ export default function KitchenDashboard() {
         return [newOrder, ...prev];
       });
 
-      // Play audio chime
-      playChime();
+      // Play loud authentic kitchen buzzer alarm
+      playKitchenBuzzer();
+      setBuzzerAlert({
+        id: newOrder._id,
+        tableNumber: newOrder.tableNumber,
+        itemCount: newOrder.items?.length || 1,
+        itemsSummary: newOrder.items?.map((i) => `${i.quantity}x ${i.name}`).join(', ') || 'New items',
+      });
     });
 
     socket.on('new_qt', (newQt: QT) => {
-      console.log('[Kitchen Socket] New Quick Ticket received:', newQt.ticketNumber);
-      playChime();
+      console.log('[Kitchen Buzzer] New Quick Ticket received:', newQt.ticketNumber);
+      playKitchenBuzzer();
       setQts((prev) => [newQt, ...prev.filter((q) => q._id !== newQt._id)]);
+      setBuzzerAlert({
+        id: newQt._id,
+        tableNumber: newQt.tableNumber,
+        itemCount: newQt.items?.length || 1,
+        itemsSummary: `Ticket ${newQt.ticketNumber}: ` + (newQt.items?.map((i) => `${i.quantity}x ${i.name}`).join(', ') || 'New items'),
+      });
     });
 
     socket.on('qt_status_updated', (updatedQt: QT) => {
@@ -176,7 +211,7 @@ export default function KitchenDashboard() {
         if (prev.some((r) => r._id === newReq._id)) return prev;
         return [newReq, ...prev];
       });
-      playWaiterChime();
+      playBellAlert();
     });
 
     socket.on('waiter_request_resolved', (payload: { _id: string }) => {
@@ -186,7 +221,7 @@ export default function KitchenDashboard() {
 
     socket.on('bill_payment_verifying', (data: { billId: string; billNumber: string; tableNumber: string; totalAmount: number; paymentMethod?: string }) => {
       console.log('[Kitchen Socket] Bill verifying payment:', data.billId, data.paymentMethod);
-      playChime();
+      playBellAlert();
       fetchRecentBills();
       setVerifyingBills((prev) => {
         if (prev.some((b) => b.billId === data.billId)) return prev;
@@ -200,8 +235,14 @@ export default function KitchenDashboard() {
     });
 
     socket.on('order_items_appended', (data: { orderId: string; tableNumber: string; newItems: any[] }) => {
-      console.log('[Kitchen Socket] Items appended to order:', data.orderId);
-      playChime();
+      console.log('[Kitchen Buzzer] Items appended to order:', data.orderId);
+      playKitchenBuzzer();
+      setBuzzerAlert({
+        id: data.orderId,
+        tableNumber: data.tableNumber,
+        itemCount: data.newItems?.length || 1,
+        itemsSummary: `Added: ` + (data.newItems?.map((i) => `${i.quantity}x ${i.name}`).join(', ') || 'New items'),
+      });
       setRecentlyAppendedOrderIds((prev) => {
         if (prev.includes(data.orderId)) return prev;
         return [...prev, data.orderId];
@@ -421,7 +462,18 @@ export default function KitchenDashboard() {
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => {
+              playKitchenBuzzer();
+            }}
+            className="text-xs font-bold cursor-pointer gap-1.5 h-9 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20"
+            title="Test Kitchen Buzzer Alarm"
+          >
+            <Volume2 className="w-4 h-4" /> Test Buzzer
+          </Button>
           <ThemeToggle />
           <Button variant="outline" size="sm" onClick={handleLogout} className="text-xs cursor-pointer gap-1.5 h-9">
             <LogOut className="w-4 h-4" /> Sign Out
@@ -431,6 +483,45 @@ export default function KitchenDashboard() {
 
       {/* Main Panel grid */}
       <main className="flex-1 p-6 space-y-6 max-w-7xl mx-auto w-full">
+        {/* Real-time Visual Kitchen Buzzer Alert Banner */}
+        {buzzerAlert && (
+          <div className="bg-red-600 text-white p-4 rounded-2xl shadow-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-pulse border-2 border-white/30">
+            <div className="flex items-center gap-3.5">
+              <div className="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center font-black text-2xl animate-bounce shrink-0">
+                🚨
+              </div>
+              <div>
+                <div className="font-serif font-black text-base tracking-wide flex items-center gap-2">
+                  <span>BUZZER: NEW ORDER - TABLE {buzzerAlert.tableNumber}</span>
+                  <span className="bg-white text-red-700 text-[10px] font-black px-2 py-0.5 rounded-full uppercase">
+                    {buzzerAlert.itemCount} Item(s)
+                  </span>
+                </div>
+                <p className="text-xs text-red-100 font-medium mt-0.5">
+                  {buzzerAlert.itemsSummary}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+              <Button
+                size="sm"
+                onClick={() => { playKitchenBuzzer(); }}
+                className="bg-white/20 hover:bg-white/30 text-white font-bold text-xs cursor-pointer border border-white/30"
+              >
+                Re-Buzz 🔊
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => setBuzzerAlert(null)}
+                className="bg-white text-red-700 hover:bg-white/90 font-black text-xs cursor-pointer shadow-md"
+              >
+                Dismiss Buzzer ✕
+              </Button>
+            </div>
+          </div>
+        )}
+
         {error && (
           <div className="bg-destructive/10 border border-destructive/20 text-destructive text-sm px-4 py-3 rounded-lg flex items-center gap-2">
             <AlertTriangle className="w-5 h-5 shrink-0" />
