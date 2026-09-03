@@ -143,8 +143,8 @@ router.post('/', async (req, res) => {
     order.tax = Number(((order.subtotal * taxRate) / 100).toFixed(2));
     order.totalAmount = Number((order.subtotal + order.tax).toFixed(2));
 
-    if (order.status === 'served' || order.status === 'ready' || order.status === 'completed') {
-      order.status = 'accepted';
+    if (order.status === 'served' || order.status === 'ready' || order.status === 'completed' || isNew) {
+      order.status = 'received';
     }
     await order.save();
 
@@ -1086,10 +1086,8 @@ router.post('/:id/append', async (req, res) => {
     order.tax = Number(((order.subtotal * taxRate) / 100).toFixed(2));
     order.totalAmount = Number((order.subtotal + order.tax).toFixed(2));
 
-    // If order was already served or ready, move back to accepted to notify kitchen
-    if (order.status === 'served' || order.status === 'ready') {
-      order.status = 'accepted';
-    }
+    // If order was already served or ready or active, move back to received to require admin acceptance
+    order.status = 'received';
 
     await order.save();
 

@@ -10,7 +10,7 @@ import { printQuickTicket } from '../../lib/printService';
 import ThemeToggle from '../../components/ThemeToggle';
 import { 
   Loader2, LayoutDashboard, UtensilsCrossed, Tablet, Users, 
-  ChefHat, LogOut, Coffee, Menu, X, Settings, Ticket, Bell, Printer
+  ChefHat, LogOut, Coffee, Menu, X, Settings, Ticket, Bell, Printer, Check
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -23,13 +23,16 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [incomingAlert, setIncomingAlert] = useState<{
     id: string;
+    orderId?: string;
     tableNumber: string;
     title: string;
     subtitle: string;
     qt?: any;
     items?: Array<{ name: string; quantity: number }>;
+    isAccepted?: boolean;
   } | null>(null);
   const [isPrintingAlertKOT, setIsPrintingAlertKOT] = useState(false);
+  const [isAcceptingOrder, setIsAcceptingOrder] = useState(false);
 
   const socket = useSocket('restaurant', user?.restaurantId);
 
@@ -45,10 +48,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       playOrderChime();
       setIncomingAlert({
         id: Date.now().toString(),
+        orderId: order?._id,
         tableNumber: order?.tableNumber || 'N/A',
         title: `New Order: Table ${order?.tableNumber || 'N/A'}`,
-        subtitle: `${order?.items?.length || 1} item(s) ordered`,
+        subtitle: `${order?.items?.length || 1} item(s) ordered via scanner`,
         items: order?.items,
+        isAccepted: order?.status === 'accepted',
       });
     };
 
@@ -59,11 +64,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       const itemNames = data?.newItems?.map((i: any) => `${i.quantity}x ${i.name}`).join(', ') || `${itemsCount} new item(s)`;
       setIncomingAlert({
         id: Date.now().toString(),
+        orderId: data?.orderId,
         tableNumber: data?.tableNumber || 'N/A',
         title: `QR Scan Added: Table ${data?.tableNumber || 'N/A'}`,
         subtitle: itemNames,
         qt: data?.qt,
         items: data?.newItems,
+        isAccepted: false,
       });
     };
 
@@ -73,11 +80,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       const itemsList = qt?.items?.map((i: any) => `${i.quantity}x ${i.name}`).join(', ') || 'New items';
       setIncomingAlert({
         id: Date.now().toString(),
+        orderId: qt?.orderId ? (typeof qt.orderId === 'object' ? qt.orderId._id : qt.orderId) : undefined,
         tableNumber: qt?.tableNumber || 'N/A',
         title: `Kitchen Ticket: ${qt?.ticketNumber || 'QT'} (Table ${qt?.tableNumber || 'N/A'})`,
         subtitle: itemsList,
         qt: qt,
         items: qt?.items,
+        isAccepted: qt?.status === 'accepted' || qt?.status === 'printed' || qt?.status === 'served',
       });
     };
 
@@ -116,14 +125,36 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     };
   }, [socket]);
 
-  // Auto-dismiss alert after 9 seconds
+  // Auto-dismiss alert after 12 seconds
   useEffect(() => {
     if (!incomingAlert) return;
     const timer = setTimeout(() => {
       setIncomingAlert(null);
-    }, 9000);
+    }, 12000);
     return () => clearTimeout(timer);
   }, [incomingAlert]);
+
+  const handleAcceptAlertOrder = async (orderId: string) => {
+    if (!orderId || isAcceptingOrder) return;
+    setIsAcceptingOrder(true);
+    try {
+      await api.patch(`/orders/${orderId}/status`, { status: 'accepted' });
+      setIncomingAlert((prev) =>
+        prev
+          ? {
+              ...prev,
+              isAccepted: true,
+              subtitle: '✅ Order accepted and queued in kitchen!',
+            }
+          : null
+      );
+    } catch (err: any) {
+      console.error('Failed to accept order from alert:', err);
+      alert(err.response?.data?.message || 'Failed to accept order.');
+    } finally {
+      setIsAcceptingOrder(false);
+    }
+  };
 
   const handlePrintAlertKOT = async (qt: any) => {
     if (!qt) return;
@@ -340,8 +371,19 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                   {incomingAlert.subtitle}
                 </p>
 
-                {incomingAlert.qt && (
-                  <div className="mt-2.5 flex items-center gap-2">
+                <div className="mt-2.5 flex items-center gap-2 flex-wrap">
+                  {!incomingAlert.isAccepted && incomingAlert.orderId && (
+                    <button
+                      onClick={() => handleAcceptAlertOrder(incomingAlert.orderId!)}
+                      disabled={isAcceptingOrder}
+                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold cursor-pointer transition-all flex items-center gap-1.5 shadow-md shadow-emerald-600/20 disabled:opacity-60"
+                    >
+                      {isAcceptingOrder ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                      <span>Accept Order</span>
+                    </button>
+                  )}
+
+                  {incomingAlert.qt && (
                     <button
                       onClick={() => handlePrintAlertKOT(incomingAlert.qt)}
                       disabled={isPrintingAlertKOT}
@@ -350,8 +392,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                       {isPrintingAlertKOT ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Printer className="w-3.5 h-3.5" />}
                       <span>Print KOT ({incomingAlert.qt.ticketNumber || 'Ticket'})</span>
                     </button>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
             </div>
           )}

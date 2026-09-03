@@ -90,6 +90,7 @@ export default function AdminTablesPage() {
   const [cancellingOrder, setCancellingOrder] = useState<string | null>(null);
   const [modifyingItemKey, setModifyingItemKey] = useState<string | null>(null);
   const [printingKotId, setPrintingKotId] = useState<string | null>(null);
+  const [acceptingOrderId, setAcceptingOrderId] = useState<string | null>(null);
 
   // Register Table Form state
   const [tableNumber, setTableNumber] = useState('');
@@ -860,6 +861,23 @@ export default function AdminTablesPage() {
     }
   };
 
+  // Handle Admin Accept Order placed from scanner
+  const handleAdminAcceptOrder = async (order: Order) => {
+    setAcceptingOrderId(order._id);
+    try {
+      await api.patch(`/orders/${order._id}/status`, { status: 'accepted' });
+      setActiveOrders((prev) =>
+        prev.map((o) => (o._id === order._id ? { ...o, status: 'accepted' } : o))
+      );
+      await fetchAllData();
+    } catch (err: any) {
+      console.error('Failed to accept order:', err);
+      alert(err.response?.data?.message || 'Failed to accept order.');
+    } finally {
+      setAcceptingOrderId(null);
+    }
+  };
+
   // Handle Admin Remove / Modify Item
   const handleAdminModifyItem = async (order: Order, item: OrderItem, itemIdx: number, action: 'remove' | 'decrease' | 'increase') => {
     const itemId = (item as any)._id || String(itemIdx);
@@ -1134,6 +1152,8 @@ export default function AdminTablesPage() {
                           variant={
                             info.status === 'BILL_REQUESTED'
                               ? 'danger'
+                              : info.latestOrder?.status === 'received'
+                              ? 'warning'
                               : info.status === 'SERVED'
                               ? 'success'
                               : isActive
@@ -1145,6 +1165,10 @@ export default function AdminTablesPage() {
                           {info.status === 'BILL_REQUESTED' ? (
                             <>
                               <AlertTriangle className="w-3 h-3 text-amber-600" /> BILL REQUESTED
+                            </>
+                          ) : info.latestOrder?.status === 'received' ? (
+                            <>
+                              <Clock className="w-3 h-3 text-amber-600 animate-spin" /> SCANNER - PENDING ACCEPT
                             </>
                           ) : info.status === 'SERVED' ? (
                             <>
@@ -1169,7 +1193,9 @@ export default function AdminTablesPage() {
                           </div>
                           <div className="flex justify-between items-center text-muted-foreground">
                             <span>Order Status:</span>
-                            <span className="font-bold text-primary capitalize">{info.latestOrder?.status || 'Active'}</span>
+                            <span className={`font-bold capitalize ${info.latestOrder?.status === 'received' ? 'text-amber-600 dark:text-amber-400 animate-pulse' : 'text-primary'}`}>
+                              {info.latestOrder?.status === 'received' ? 'Pending Accept' : info.latestOrder?.status || 'Active'}
+                            </span>
                           </div>
                           <div className="flex justify-between items-center text-muted-foreground">
                             <span>Items Ordered:</span>
@@ -1191,7 +1217,24 @@ export default function AdminTablesPage() {
                     {/* Card Action Button */}
                     <div className="p-4 border-t border-border/40 bg-secondary/10">
                       {info.isEligibleForBilling ? (
-                        <div className="flex gap-2">
+                        <div className="flex gap-2 flex-wrap">
+                          {info.latestOrder?.status === 'received' && (
+                            <Button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleAdminAcceptOrder(info.latestOrder!);
+                              }}
+                              disabled={acceptingOrderId === info.latestOrder._id}
+                              className="w-full text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-600/20 cursor-pointer gap-1.5"
+                            >
+                              {acceptingOrderId === info.latestOrder._id ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Check className="w-3.5 h-3.5" />
+                              )}
+                              Accept Scanner Order
+                            </Button>
+                          )}
                           <Button
                             onClick={() => setSelectedTableNum(table.tableNumber)}
                             className={`flex-1 text-xs font-bold shadow-md cursor-pointer gap-1.5 ${
@@ -1212,7 +1255,24 @@ export default function AdminTablesPage() {
                           </Button>
                         </div>
                       ) : isActive ? (
-                        <div className="flex gap-2">
+                        <div className="flex gap-2 flex-wrap">
+                          {info.latestOrder?.status === 'received' && (
+                            <Button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleAdminAcceptOrder(info.latestOrder!);
+                              }}
+                              disabled={acceptingOrderId === info.latestOrder._id}
+                              className="w-full text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-600/20 cursor-pointer gap-1.5"
+                            >
+                              {acceptingOrderId === info.latestOrder._id ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Check className="w-3.5 h-3.5" />
+                              )}
+                              Accept Scanner Order
+                            </Button>
+                          )}
                           <Button
                             onClick={() => setSelectedTableNum(table.tableNumber)}
                             variant="outline"
@@ -1421,10 +1481,30 @@ export default function AdminTablesPage() {
                           <span className="font-bold text-xs text-foreground block">Customer: {ord.customerName}</span>
                           <span className="text-[10px] text-muted-foreground font-mono">Phone: {ord.phoneNumber}</span>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <Badge variant="outline" className="text-[9px] font-extrabold capitalize">
-                            {ord.status}
+                        <div className="flex items-center gap-2 flex-wrap justify-end">
+                          <Badge 
+                            variant={ord.status === 'received' ? 'warning' : 'outline'} 
+                            className={`text-[9px] font-extrabold capitalize ${ord.status === 'received' ? 'animate-pulse' : ''}`}
+                          >
+                            {ord.status === 'received' ? 'Pending Accept' : ord.status}
                           </Badge>
+                          {ord.status === 'received' && (
+                            <Button
+                              size="sm"
+                              disabled={acceptingOrderId === ord._id}
+                              onClick={() => handleAdminAcceptOrder(ord)}
+                              className="h-7 px-2.5 text-[10px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer gap-1 transition-all shadow-sm"
+                              title="Accept this scanned customer order"
+                            >
+                              {acceptingOrderId === ord._id ? (
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              ) : (
+                                <>
+                                  <Check className="w-3 h-3" /> Accept Order
+                                </>
+                              )}
+                            </Button>
+                          )}
                           <Button
                             variant="outline"
                             size="sm"
